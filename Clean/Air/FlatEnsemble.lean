@@ -1,7 +1,7 @@
 /-
 This file defines flat AIR ensembles and what soundness and completeness mean for them.
 -/
-import Clean.Air.FlatComponent
+import Clean.Air.Entry
 import Clean.Air.Balance
 import Clean.Circuit.Verifier
 
@@ -25,6 +25,13 @@ instance : HasChannelInterface F (Component F) where
     { channelsWithGuarantees := component.circuit.channelsWithGuarantees
       channelsWithRequirements := component.circuit.channelsWithRequirements }
 
+/-- An entry exposes its component's channels; the kind affects how often the circuit is
+checked, never which channels it talks on. -/
+instance : HasChannelInterface F (Entry F) where
+  channelInterface entry :=
+    { channelsWithGuarantees := entry.component.circuit.channelsWithGuarantees
+      channelsWithRequirements := entry.component.circuit.channelsWithRequirements }
+
 instance : HasChannelInterface F (Verifier.Program F PublicIO) where
   channelInterface verifier :=
     { channelsWithGuarantees := verifier.channelsWithGuarantees
@@ -36,6 +43,12 @@ instance : HasChannelInterface F (Verifier.Program F PublicIO) where
 @[circuit_norm] lemma component_channelInterface_requirements (component : Component F) :
     (channelInterface component).channelsWithRequirements =
       component.circuit.channelsWithRequirements := rfl
+@[circuit_norm] lemma entry_channelInterface (entry : Entry F) :
+    (channelInterface entry).channelsWithGuarantees =
+      entry.component.circuit.channelsWithGuarantees := rfl
+@[circuit_norm] lemma entry_channelInterface_requirements (entry : Entry F) :
+    (channelInterface entry).channelsWithRequirements =
+      entry.component.circuit.channelsWithRequirements := rfl
 @[circuit_norm] lemma verifier_channelInterface (verifier : Verifier.Program F PublicIO) :
     (channelInterface verifier).channelsWithGuarantees = verifier.channelsWithGuarantees := rfl
 @[circuit_norm] lemma verifier_channelInterface_requirements
@@ -44,24 +57,28 @@ instance : HasChannelInterface F (Verifier.Program F PublicIO) where
 
 structure Ensemble (F : Type) [FiniteField F] (PublicIO : TypeMap) [ProvableType PublicIO] where
   /-- Components form an ordered map: names are keys, while list order fixes the trace order
-  consumed by witness generation and backend extraction. -/
-  tables : List (Component F)
-  unique_names : (tables.map (·.circuit.name)).Nodup
+  consumed by witness generation and backend extraction. Each entry also records the *kind* of
+  trace its component is checked against, which the witness is not free to reinterpret. -/
+  tables : List (Entry F)
+  unique_names : (tables.map (·.component.circuit.name)).Nodup
   channels : List (RawChannel F)
   verifier : Verifier.Program F PublicIO := .empty F PublicIO
 
 /-- The public input and component traces committed by an ensemble proof. -/
 structure EnsembleWitness (ens : Ensemble F PublicIO) where
-  tables : List (Table F)
+  tables : List (EntryTable F)
   publicInput : PublicIO F
   same_length : ens.tables.length = tables.length
+  /-- Binds the witness to the ensemble by *both* component and kind. Binding only the component
+  would let a prover commit a transition component as a flat trace, whose next-row reads then
+  silently return `0` rather than failing -- letting the prover pick the weaker constraints. -/
   same_circuits : ∀ i (hi : i < ens.tables.length),
-    ens.tables[i] = tables[i].component
+    ens.tables[i] = tables[i].entry
 
 /-- External prover data consists of the complete inputs of the committed component traces. -/
 def EnsembleWitness.data {ens : Ensemble F PublicIO} (witness : EnsembleWitness ens) :
     ProverData F :=
-  deriveProverData witness.tables
+  EntryTable.deriveProverData witness.tables
 
 @[circuit_norm]
 lemma List.flatMap_subset_iff {α β : Type*} {f : α → List β} {l₁ : List α} {l₂ : List β} :
@@ -132,53 +149,64 @@ lemma verifierChannelGuarantees_of_not_mem
 
 def channelsWithGuarantees (ens : Ensemble F PublicIO) : List (RawChannel F) :=
   ens.verifier.channelsWithGuarantees ++
-    ens.tables.flatMap (·.circuit.channelsWithGuarantees)
+    ens.tables.flatMap (·.component.circuit.channelsWithGuarantees)
 
 def channelsWithRequirements (ens : Ensemble F PublicIO) : List (RawChannel F) :=
   ens.verifier.channelsWithRequirements ++
-    ens.tables.flatMap (·.circuit.channelsWithRequirements)
+    ens.tables.flatMap (·.component.circuit.channelsWithRequirements)
 
 lemma channelsWithGuarantees_eq_verifier_append (ens : Ensemble F PublicIO) :
-  ens.channelsWithGuarantees = ens.verifier.channelsWithGuarantees ++ ens.tables.flatMap (·.circuit.channelsWithGuarantees) := by
+  ens.channelsWithGuarantees = ens.verifier.channelsWithGuarantees ++
+    ens.tables.flatMap (·.component.circuit.channelsWithGuarantees) := by
   rfl
 
 lemma channelsWithRequirements_eq_verifier_append (ens : Ensemble F PublicIO) :
-  ens.channelsWithRequirements = ens.verifier.channelsWithRequirements ++ ens.tables.flatMap (·.circuit.channelsWithRequirements) := by
+  ens.channelsWithRequirements = ens.verifier.channelsWithRequirements ++
+    ens.tables.flatMap (·.component.circuit.channelsWithRequirements) := by
   rfl
 
 @[circuit_norm]
 lemma channelsWithGuarantees_subset_iff {ens : Ensemble F PublicIO} {finished : List (RawChannel F)} :
   ens.channelsWithGuarantees ⊆ finished ↔
     ens.verifier.channelsWithGuarantees ⊆ finished ∧
-      ∀ component ∈ ens.tables, component.circuit.channelsWithGuarantees ⊆ finished := by
+      ∀ entry ∈ ens.tables, entry.component.circuit.channelsWithGuarantees ⊆ finished := by
   simp [circuit_norm, channelsWithGuarantees]
 end Ensemble
 
 namespace EnsembleWitness
 variable {ens : Ensemble F PublicIO}
 
+/-- The witness's traces fill exactly the ensemble's entries -- component *and* kind. -/
 @[circuit_norm]
-lemma tables_map_component (witness : EnsembleWitness ens) :
-    witness.tables.map (·.component) = ens.tables := by
+lemma tables_map_entry (witness : EnsembleWitness ens) :
+    witness.tables.map (·.entry) = ens.tables := by
   apply List.ext_getElem
   · simp [witness.same_length]
   intro i hi hi'
   simp [witness.same_circuits i hi']
 
+@[circuit_norm]
+lemma tables_map_component (witness : EnsembleWitness ens) :
+    witness.tables.map (·.component) = ens.tables.map (·.component) := by
+  rw [← witness.tables_map_entry, List.map_map]
+  rfl
+
 private lemma tableNamesNodup (witness : EnsembleWitness ens) :
     (witness.tables.map (fun table => table.component.circuit.name)).Nodup := by
   rw [show witness.tables.map (fun table => table.component.circuit.name) =
-    ens.tables.map (·.circuit.name) by
+    ens.tables.map (·.component.circuit.name) by
       calc
         _ = (witness.tables.map (·.component)).map (·.circuit.name) := by simp
-        _ = ens.tables.map (·.circuit.name) :=
-          congrArg (List.map (·.circuit.name)) witness.tables_map_component]
+        _ = (ens.tables.map (·.component)).map (·.circuit.name) :=
+          congrArg (List.map (·.circuit.name)) witness.tables_map_component
+        _ = ens.tables.map (·.component.circuit.name) := by simp]
   exact ens.unique_names
 
 lemma data_consistent (witness : EnsembleWitness ens) :
     ∀ table ∈ witness.tables, table.DataConsistency witness.data := by
   intro table htable
-  exact deriveProverData_eq_of_mem witness.tables witness.tableNamesNodup
+  rw [EntryTable.dataConsistency_iff]
+  exact EntryTable.deriveProverData_eq_of_mem witness.tables witness.tableNamesNodup
     htable _
 
 def tableContext (witness : EnsembleWitness ens) : TableContext F where
@@ -192,8 +220,14 @@ def tableContext (witness : EnsembleWitness ens) : TableContext F where
   witness.tableContext.data = witness.data := rfl
 
 @[circuit_norm]
-lemma mem_component_of_mem {witness : EnsembleWitness ens} {table : Table F} :
-    table ∈ witness.tables → table.component ∈ ens.tables := by
+lemma mem_entry_of_mem {witness : EnsembleWitness ens} {table : EntryTable F} :
+    table ∈ witness.tables → table.entry ∈ ens.tables := by
+  rw [← witness.tables_map_entry]
+  grind
+
+@[circuit_norm]
+lemma mem_component_of_mem {witness : EnsembleWitness ens} {table : EntryTable F} :
+    table ∈ witness.tables → table.component ∈ ens.tables.map (·.component) := by
   rw [← witness.tables_map_component]
   grind
 
@@ -205,11 +239,11 @@ def Assumptions {ens : Ensemble F PublicIO} (witness : EnsembleWitness ens) : Pr
 
 def Spec {ens : Ensemble F PublicIO} (witness : EnsembleWitness ens) : Prop :=
   ens.VerifierSpec witness.publicInput witness.data ∧
-    ∀ table ∈ witness.tables, table.Spec witness.data
+    ∀ table ∈ witness.tables, RowEnvs.Spec (F:=F) table witness.data
 
 def interactions {ens : Ensemble F PublicIO} (witness : EnsembleWitness ens) : List (Interaction F) :=
   ens.verifierOperations.interactionValues (.fromInput witness.publicInput witness.data) ++
-    witness.tables.flatMap (fun table => table.interactions witness.data)
+    witness.tables.flatMap (fun table => RowEnvs.interactions (F:=F) table witness.data)
 
 noncomputable def verifierInteractionsWith {ens : Ensemble F PublicIO}
     (witness : EnsembleWitness ens) (channel : RawChannel F) : List (Interaction F) :=
@@ -222,25 +256,27 @@ noncomputable def interactionsWith {ens : Ensemble F PublicIO} (witness : Ensemb
 
 @[circuit_norm] lemma constraints_iff {ens : Ensemble F PublicIO}
     (witness : EnsembleWitness ens) :
-  witness.Constraints ↔ ∀ table ∈ witness.tables, table.Constraints witness.data := by
+  witness.Constraints ↔
+    ∀ table ∈ witness.tables, RowEnvs.Constraints (F:=F) table witness.data := by
   rfl
 
 @[circuit_norm] lemma assumptions_iff {ens : Ensemble F PublicIO}
     (witness : EnsembleWitness ens) :
-  witness.Assumptions ↔ ∀ table ∈ witness.tables, table.Assumptions witness.data := by
+  witness.Assumptions ↔
+    ∀ table ∈ witness.tables, RowEnvs.Assumptions (F:=F) table witness.data := by
   rfl
 
 @[circuit_norm] lemma spec_iff {ens : Ensemble F PublicIO}
     (witness : EnsembleWitness ens) :
   witness.Spec ↔ ens.VerifierSpec witness.publicInput witness.data ∧
-    ∀ table ∈ witness.tables, table.Spec witness.data := by
+    ∀ table ∈ witness.tables, RowEnvs.Spec (F:=F) table witness.data := by
   rfl
 
 lemma mem_interactionsWith {witness : EnsembleWitness ens}
   {channel : RawChannel F} {i : Interaction F} :
     i ∈ witness.interactionsWith channel ↔
     i ∈ witness.verifierInteractionsWith channel ∨
-      ∃ table ∈ witness.tables, i ∈ table.interactionsWith witness.data channel := by
+      ∃ table ∈ witness.tables, i ∈ RowEnvs.interactionsWith (F:=F) table witness.data channel := by
   simp only [interactionsWith, TableContext.interactionsWith, tableContext,
     List.mem_append, List.mem_flatMap]
 
@@ -253,7 +289,7 @@ lemma channel_eq_of_mem_interactionsWith {witness : EnsembleWitness ens}
       List.mem_map] at h_verifier
     obtain ⟨interaction, h_interaction, rfl⟩ := h_verifier
     exact Operations.channel_eq_of_mem_interactionsWith h_interaction
-  · exact table.channel_eq_of_mem_interactionsWith h_table
+  · exact RowEnvs.channel_eq_of_mem_interactionsWith (table:=table) h_table
 
 lemma verifierChannelRequirements_iff_forall {witness : EnsembleWitness ens}
     {channel : RawChannel F} :
@@ -276,7 +312,7 @@ lemma verifierChannelGuarantees_iff_forall {witness : EnsembleWitness ens}
 lemma interactionsWith_of_verifier_empty {ens : Ensemble F PublicIO} {witness : EnsembleWitness ens} {channel : RawChannel F}
   (h_verifier_empty : ens.verifier = .empty F PublicIO) :
     witness.interactionsWith channel =
-      witness.tables.flatMap (·.interactionsWith witness.data channel) := by
+      witness.tables.flatMap (RowEnvs.interactionsWith (F:=F) · witness.data channel) := by
   simp [interactionsWith, verifierInteractionsWith, TableContext.interactionsWith,
     circuit_norm, h_verifier_empty, Verifier.Program.empty]
 
@@ -381,7 +417,7 @@ end Ensemble
 namespace Ensemble
 /-- Takes the verifier from the second ensemble. -/
 def merge (ens1 ens2 : Ensemble F PublicIO)
-    (unique_names : ((ens2.tables ++ ens1.tables).map (·.circuit.name)).Nodup) :
+    (unique_names : ((ens2.tables ++ ens1.tables).map (·.component.circuit.name)).Nodup) :
     Ensemble F PublicIO :=
   { ens2 with
     tables := ens2.tables ++ ens1.tables,
@@ -393,16 +429,45 @@ def merge (ens1 ens2 : Ensemble F PublicIO)
 @[circuit_norm] lemma merge_verifier (ens1 ens2 : Ensemble F PublicIO) (unique_names) :
   (ens1.merge ens2 unique_names).verifier = ens2.verifier := rfl
 
-def addTable (ens : Ensemble F PublicIO) (table : Component F)
-    (fresh : table.circuit.name ∉ ens.tables.map (·.circuit.name)) : Ensemble F PublicIO :=
+/-- Add an entry of an explicitly given kind. -/
+def addEntry (ens : Ensemble F PublicIO) (entry : Entry F)
+    (fresh : entry.component.circuit.name ∉ ens.tables.map (·.component.circuit.name)) :
+    Ensemble F PublicIO :=
   { ens with
-    tables := table :: ens.tables
+    tables := entry :: ens.tables
     unique_names := by simpa using List.nodup_cons.mpr ⟨fresh, ens.unique_names⟩ }
 
+@[circuit_norm] lemma addEntry_tables (ens : Ensemble F PublicIO) (entry : Entry F) (fresh) :
+  (ens.addEntry entry fresh).tables = entry :: ens.tables := rfl
+@[circuit_norm] lemma addEntry_verifier (ens : Ensemble F PublicIO) (entry : Entry F) (fresh) :
+  (ens.addEntry entry fresh).verifier = ens.verifier := rfl
+
+/-- Add a component checked once per row. -/
+def addTable (ens : Ensemble F PublicIO) (table : Component F)
+    (fresh : table.circuit.name ∉ ens.tables.map (·.component.circuit.name)) :
+    Ensemble F PublicIO :=
+  ens.addEntry { component := table, kind := .flat } fresh
+
+/-- Add a component checked once per *adjacent pair* of rows, against `curr ++ next`.
+
+An `n`-row transition trace imposes `n - 1` constraint instances, and a trace of 0 or 1 rows is
+unconstrained -- so boundary conditions must still be pinned through channel interactions. -/
+def addTransitionTable (ens : Ensemble F PublicIO) (table : Component F)
+    (fresh : table.circuit.name ∉ ens.tables.map (·.component.circuit.name)) :
+    Ensemble F PublicIO :=
+  ens.addEntry { component := table, kind := .transition } fresh
+
 @[circuit_norm] lemma addTable_tables (ens : Ensemble F PublicIO) (table : Component F) (fresh) :
-  (ens.addTable table fresh).tables = table :: ens.tables := rfl
+  (ens.addTable table fresh).tables = { component := table, kind := .flat } :: ens.tables := rfl
 @[circuit_norm] lemma addTable_verifier (ens : Ensemble F PublicIO) (table : Component F) (fresh) :
   (ens.addTable table fresh).verifier = ens.verifier := rfl
+@[circuit_norm] lemma addTransitionTable_tables (ens : Ensemble F PublicIO) (table : Component F)
+    (fresh) :
+  (ens.addTransitionTable table fresh).tables =
+    { component := table, kind := .transition } :: ens.tables := rfl
+@[circuit_norm] lemma addTransitionTable_verifier (ens : Ensemble F PublicIO) (table : Component F)
+    (fresh) :
+  (ens.addTransitionTable table fresh).verifier = ens.verifier := rfl
 
 end Ensemble
 end Air.Flat

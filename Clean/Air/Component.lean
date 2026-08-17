@@ -570,6 +570,42 @@ theorem weakSoundness {table : T} {data : ProverData F}
   · intro env h_env
     exact (Component.weakSoundness (assumptions env h_env)
       (constraints env h_env) (guarantees env h_env)).right
+
+/--
+If we know constraints and _some_ of the guarantees unconditionally, we can remove them from the
+per-environment assumptions.
+
+This lemma is tailored to VM-like channels where there remains a single channel that we need to
+prove guarantees for. Like everything else here it is kind-agnostic: it never mentions how many
+rows an environment spans.
+-/
+lemma requirements_of_partial_guarantees_of_constraints {table : T} {data : ProverData F}
+  {finished : List (RawChannel F)} {unfinished : RawChannel F} :
+  CircuitAssumptions (F:=F) table data →
+  Constraints (F:=F) table data →
+  channelsWithGuarantees (F:=F) table ⊆ unfinished :: finished →
+  (∀ channel ∈ finished, ChannelGuarantees (F:=F) table data channel) →
+    ∀ env ∈ envs (F:=F) table data,
+      (component (F:=F) table).operations.ChannelGuarantees unfinished env →
+      (component (F:=F) table).operations.ChannelRequirements unfinished env := by
+  intro assumptions constraints subset finished_grts env h_env channel_grts
+  replace finished_grts channel hc := finished_grts channel hc env h_env
+  suffices (component (F:=F) table).operations.FullRequirements env by
+    simp only [circuit_norm] at this ⊢
+    intro i hi _
+    exact this i hi
+  suffices (component (F:=F) table).operations.FullGuarantees env from
+    Component.weakSoundness (assumptions env h_env) (constraints env h_env) this |>.right
+  simp only [Component.guarantees_iff, Component.rowOperations]
+  rw [GeneralFormalCircuit.guarantees_iff]
+  intro channel channel_mem
+  show (component (F:=F) table).rowOperations.ChannelGuarantees channel env
+  rw [← Component.channelGuarantees_iff]
+  replace channel_mem := subset channel_mem
+  simp at channel_mem
+  rcases channel_mem with rfl | channel_mem
+  · exact channel_grts
+  · exact finished_grts _ channel_mem
 end RowEnvs
 
 end Air.Flat

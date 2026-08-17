@@ -217,15 +217,16 @@ private def witnessDataReads : {n : ℕ} → Witgen.WitgenIR F n → List DataRe
 
 private def validateDataReads (ensemble : Ensemble F PublicIO) (modes : List (Mode F)) :
     Except LoweringError Unit := do
-  for (component, componentIndex) in ensemble.tables.zipIdx do
-    for (operation, operationIndex) in component.rowOperations.toFlat.zipIdx do
+  for (entry, componentIndex) in ensemble.tables.zipIdx do
+    for (operation, operationIndex) in entry.component.rowOperations.toFlat.zipIdx do
       if let .witness _ code := operation then
         for read in witnessDataReads code do
           let some (target, mode) := (ensemble.tables.zip modes).find? fun (target, _) =>
-              target.circuit.name == read.key
+              target.component.circuit.name == read.key
             | throw (.unknownDataRead componentIndex operationIndex read.key)
-          unless read.width = target.rowOffset do
-            throw (.dataReadWidth componentIndex operationIndex read.key target.rowOffset read.width)
+          unless read.width = target.component.rowOffset do
+            throw (.dataReadWidth componentIndex operationIndex read.key target.component.rowOffset
+              read.width)
           let unstable := match mode with
             | .demand _ => true
             | .preallocated preallocated =>
@@ -240,12 +241,12 @@ def lower (ensemble : Ensemble F PublicIO) (config : Config F ProverInput) :
     throw (.modeCount ensemble.tables.length config.modes.length)
   unless config.padding.length = ensemble.tables.length do
     throw (.paddingCount ensemble.tables.length config.padding.length)
-  for (((component, mode), padding), index) in
+  for (((entry, mode), padding), index) in
       ((ensemble.tables.zip config.modes).zip config.padding).zipIdx do
-    validateMode index component mode padding
+    validateMode index entry.component mode padding
   validateDataReads ensemble config.modes
-  let components ← ensemble.tables.zipIdx.mapM fun (component, index) =>
-    lowerComponent index component
+  let components ← ensemble.tables.zipIdx.mapM fun (entry, index) =>
+    lowerComponent index entry.component
   let verifierOperations := ensemble.verifierOperations.toFlat
   let verifierInteractions := FlatOperation.interactions verifierOperations
   let verifierExpressions := verifierInteractions.flatMap fun interaction =>
