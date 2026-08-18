@@ -1,7 +1,7 @@
 import Clean.Air.FlatEnsemble
 
 variable {F : Type} [FiniteField F]
-open Air.Flat (Component Table EntryTable Entry RowEnvs TableContext channelInterface)
+open Air.Flat (Component Table RowEnvs TableContext channelInterface)
 universe u v
 variable {α : Type u} {β : Type v}
 variable [Air.Flat.HasChannelInterface F α] [Air.Flat.HasChannelInterface F β]
@@ -237,15 +237,15 @@ lemma partialBalancedChannel_of_balancedInteractions
 For ordered channels, we can always instantiate partial balance at an initial sublist.
 -/
 theorem partialBalancedChannel_of_cons_of_orderedChannelLt
-  {table : EntryTable F} {tables : TableContext F} (consistent : table.DataConsistency tables.data)
+  {table : Table F} {tables : TableContext F} (consistent : table.DataConsistency tables.data)
   {channel : RawChannel F} :
-  RowEnvs.Constraints (F:=F) table tables.data →
+  table.Constraints tables.data →
   PartialBalancedChannel (.cons table tables consistent) channel →
   OrderedChannelLt channel tables.components [table.component] →
     PartialBalancedChannel tables channel := by
   rintro table_constraints ⟨ extraInteractions, balanced, same_channel, extra_reqs_or_no_grts ⟩
     not_in_reqs_or
-  use RowEnvs.interactionsWith (F:=F) table tables.data channel ++ extraInteractions
+  use table.interactionsWith tables.data channel ++ extraInteractions
   simp only [circuit_norm] at *
   simp [or_imp] at ⊢ not_in_reqs_or extra_reqs_or_no_grts
   constructor
@@ -270,9 +270,9 @@ theorem partialBalancedChannel_of_cons_of_orderedChannelLt
 For ordered channels, we can always instantiate partial balance at an initial sublist.
 -/
 lemma partialBalancedChannel_of_cons_of_orderedChannel
-  {table : EntryTable F} {tables : TableContext F} (consistent : table.DataConsistency tables.data)
+  {table : Table F} {tables : TableContext F} (consistent : table.DataConsistency tables.data)
   {channel : RawChannel F} :
-  RowEnvs.Constraints (F:=F) table tables.data →
+  table.Constraints tables.data →
   PartialBalancedChannel (tables.cons table consistent) channel →
   OrderedChannel channel (table.component :: tables.components) →
     PartialBalancedChannel tables channel := by
@@ -286,15 +286,15 @@ on a list of tables by induction. This lemma captures the main step.
 -/
 lemma guarantees_of_requirements_cons
   -- given a list of tables, and one additional table
-  {table : EntryTable F} {tables : TableContext F} (consistent : table.DataConsistency tables.data)
+  {table : Table F} {tables : TableContext F} (consistent : table.DataConsistency tables.data)
   -- and a channel that is consistent, ordered on the new table, and partially balanced on the combined tables
   {channel : RawChannel F} [channel.Consistent] :
-  RowEnvs.Constraints (F:=F) table tables.data →
+  table.Constraints tables.data →
   OrderedChannelRefl channel table.component →
   PartialBalancedChannel (tables.cons table consistent) channel →
   -- the channel requirements on the old tables imply guarantees on the new table
-  (∀ table ∈ tables.tables, RowEnvs.ChannelRequirements (F:=F) table tables.data channel) →
-    RowEnvs.ChannelGuarantees (F:=F) table tables.data channel := by
+  (∀ table ∈ tables.tables, table.ChannelRequirements tables.data channel) →
+    table.ChannelGuarantees tables.data channel := by
   rintro table_constraints ordered_channel partial_balance ih
   /-
   thanks to ordered channel, we know that channel cannot add _both_ grts and reqs for the new table.
@@ -314,10 +314,10 @@ lemma guarantees_of_requirements_cons
   -- now, to prove this table's channel guarantees, we show guarantees on _all_ channel interactions (that we know are balanced)
   set channelInteractions := (tables.cons table consistent).interactionsWith channel ++ extraInteractions
   have subset_channelInteractions :
-      RowEnvs.interactionsWith (F:=F) table tables.data channel ⊆ channelInteractions := by
+      table.interactionsWith tables.data channel ⊆ channelInteractions := by
     simp only [channelInteractions, circuit_norm]
   suffices all_grts : ∀ i ∈ channelInteractions, i.Guarantees tables.data by
-    rw [RowEnvs.channelGuarantees_iff_forall]
+    rw [Table.channelGuarantees_iff_forall]
     intro i hi
     exact all_grts i (subset_channelInteractions hi)
   -- this works since we can prove all channel _requirements_
@@ -348,7 +348,7 @@ lemma partialBalancedChannel_of_sublist {subtables tables : TableContext F}
   (data_eq : subtables.data = tables.data) {channel : RawChannel F} :
   PartialBalancedChannel tables channel →
   (∃ otherTables, tables.tables.Perm (subtables.tables ++ otherTables) ∧
-    (∀ table ∈ otherTables, RowEnvs.Constraints (F:=F) table tables.data) ∧
+    (∀ table ∈ otherTables, table.Constraints tables.data) ∧
     ∀ table ∈ otherTables, channel ∉ RowEnvs.channelsWithRequirements (F:=F) table) →
     PartialBalancedChannel subtables channel := by
   rintro ⟨ extraInteractions, balanced, same_channel, no_grts_or_extra_reqs ⟩ subset_tables
@@ -363,7 +363,7 @@ lemma partialBalancedChannel_of_sublist {subtables tables : TableContext F}
   have subtables_subset : subtables.tables ⊆ tables.tables := by
     have p := perm.symm.subset
     simp_all
-  use otherTables.flatMap (RowEnvs.interactionsWith (F:=F) · tables.data channel) ++
+  use otherTables.flatMap (·.interactionsWith tables.data channel) ++
     extraInteractions
   simp_all only
   constructor; swap
@@ -411,12 +411,12 @@ lemma guarantees_of_requirements_append
   -- and a channel that is consistent, _doesn't add requirements_ on the new tables,
   -- and is partially balanced on the combined tables
   {channel : RawChannel F} [channel.Consistent] :
-  (∀ table ∈ ts.tables, RowEnvs.Constraints (F:=F) table ts.data) →
+  (∀ table ∈ ts.tables, table.Constraints ts.data) →
   (∀ table ∈ ts.tables, channel ∉ table.component.circuit.channelsWithRequirements) →
   PartialBalancedChannel (ts.append ss data_eq) channel →
   -- the channel requirements on the old tables imply guarantees on the new tables
-  (∀ table ∈ ss.tables, RowEnvs.ChannelRequirements (F:=F) table ss.data channel) →
-    ∀ table ∈ ts.tables, RowEnvs.ChannelGuarantees (F:=F) table ts.data channel := by
+  (∀ table ∈ ss.tables, table.ChannelRequirements ss.data channel) →
+    ∀ table ∈ ts.tables, table.ChannelGuarantees ts.data channel := by
   -- we show that for each (t, ss) pair, the assumptions of `*_cons` hold
   rintro constraints reqs partial_balance ih table h_table
   have consistent : table.DataConsistency ss.data := by
@@ -446,25 +446,25 @@ lemma guarantees_of_requirements_append
     apply reqs _ (List.mem_of_mem_eraseIdx ht')
 
 /-- Helper lemma that uses circuit soundness, to strengthen guarantees to include requirements -/
-lemma iff_guarantees_of_constraints {table : EntryTable F} {data : ProverData F}
+lemma iff_guarantees_of_constraints {table : Table F} {data : ProverData F}
     {finished : List (RawChannel F)} :
   table.DataConsistency data →
-  RowEnvs.Assumptions (F:=F) table data →
-  RowEnvs.Constraints (F:=F) table data →
+  table.Assumptions data →
+  table.Constraints data →
   table.component.circuit.channelsWithGuarantees ⊆ finished →
-  ((RowEnvs.Spec (F:=F) table data ∧ ∀ channel ∈ finished,
-      RowEnvs.ChannelGuarantees (F:=F) table data channel ∧
-        RowEnvs.ChannelRequirements (F:=F) table data channel) ↔
-    ∀ channel ∈ finished, RowEnvs.ChannelGuarantees (F:=F) table data channel) := by
+  ((table.Spec data ∧ ∀ channel ∈ finished,
+      table.ChannelGuarantees data channel ∧
+        table.ChannelRequirements data channel) ↔
+    ∀ channel ∈ finished, table.ChannelGuarantees data channel) := by
   intro consistent assumptions constraints subset_finished
   constructor; simp_all
   intro grts
-  have all_grts : RowEnvs.Guarantees (F:=F) table data := by
-    rw [RowEnvs.guarantees_iff_channelGuarantees]
+  have all_grts : table.Guarantees data := by
+    rw [Table.guarantees_iff_channelGuarantees]
     intro channel h_channel
     exact grts _ (subset_finished h_channel)
   -- constraints ∧ guarantees → requirements → channelRequirements
-  have ⟨ spec, all_reqs ⟩ := EntryTable.weakSoundness consistent assumptions constraints all_grts
+  have ⟨ spec, all_reqs ⟩ := Table.weakSoundness consistent assumptions constraints all_grts
   use spec
   intro channel h_channel
   exact ⟨ grts _ h_channel, RowEnvs.channelRequirements_of_requirements table data all_reqs ⟩
@@ -497,15 +497,15 @@ def SoundChannels (tables : List α) (finished : List (RawChannel F)) : Prop :=
 /-- `SoundChannels` lets us prove a soundness theorem. -/
 theorem spec_and_guarantees_of_soundChannels
     {witness : TableContext F} {finished : List (RawChannel F)} :
-  SoundChannels (witness.tables.map (·.entry)) finished →
+  SoundChannels (witness.tables.map (·.component)) finished →
   -- constraints + partial balance
   witness.Assumptions →
   witness.Constraints →
   (∀ channel ∈ finished, PartialBalancedChannel witness channel) →
     -- implies the spec, and the guarantees and requirements on all finished channels
-    ∀ table ∈ witness.tables, RowEnvs.Spec (F:=F) table witness.data ∧ ∀ channel ∈ finished,
-    RowEnvs.ChannelGuarantees (F:=F) table witness.data channel ∧
-      RowEnvs.ChannelRequirements (F:=F) table witness.data channel := by
+    ∀ table ∈ witness.tables, table.Spec witness.data ∧ ∀ channel ∈ finished,
+    table.ChannelGuarantees witness.data channel ∧
+      table.ChannelRequirements witness.data channel := by
   -- by induction on the tables
   rintro ⟨ subset_finished, ordered_channels, consistent_channels ⟩ assumptions constraints partial_balance
   induction witness using TableContext.induct
@@ -615,7 +615,7 @@ lemma partialBalancedChannel_of_balancedChannel {ens : Ensemble F PublicIO}
     simp only [EnsembleWitness.tableContext_tables, RowEnvs.channelsWithGuarantees]
     rw [show witness.tables.flatMap (fun table =>
         (RowEnvs.component (F:=F) table).circuit.channelsWithGuarantees) =
-      ens.tables.flatMap (·.component.circuit.channelsWithGuarantees) from by
+      ens.tables.flatMap (·.circuit.channelsWithGuarantees) from by
         have h := congrArg (List.flatMap (·.circuit.channelsWithGuarantees))
           witness.tables_map_component
         simp only [List.flatMap_map] at h
@@ -631,7 +631,7 @@ lemma verifierChannelGuarantees_of_tableRequirements {ens : Ensemble F PublicIO}
     {witness : EnsembleWitness ens} {channel : RawChannel F} [channel.Consistent] :
     OrderedChannelRefl channel ens.verifier →
     witness.BalancedChannel channel →
-    (∀ table ∈ witness.tables, RowEnvs.ChannelRequirements (F:=F) table witness.data channel) →
+    (∀ table ∈ witness.tables, table.ChannelRequirements witness.data channel) →
       ens.VerifierChannelGuarantees witness.publicInput witness.data channel := by
   intro ordered balanced table_requirements
   rcases ordered with no_verifier_guarantees | no_verifier_requirements
@@ -650,7 +650,7 @@ lemma verifierChannelGuarantees_of_tableRequirements {ens : Ensemble F PublicIO}
     rcases h_interaction with h_verifier | ⟨table, h_table, h_interaction⟩
     · exact verifier_requirements interaction h_verifier
     · have requirements := table_requirements table h_table
-      rw [RowEnvs.channelRequirements_iff_forall] at requirements
+      rw [Table.channelRequirements_iff_forall] at requirements
       exact requirements interaction h_interaction
   have all_guarantees :=
     ‹channel.Consistent›.consistent (witness.interactionsWith channel)
@@ -686,7 +686,7 @@ theorem tableSoundness_of_soundChannels {ens : Ensemble F PublicIO} :
   have table_results := spec_and_guarantees_of_soundChannels
     (witness := witness.tableContext) (by
       simpa only [EnsembleWitness.tableContext_tables,
-        witness.tables_map_entry] using table_sound_channels) assumptions
+        witness.tables_map_component] using table_sound_channels) assumptions
     constraints partial_balance
   have verifier_channel_guarantees : ∀ channel ∈ finished,
       ens.VerifierChannelGuarantees witness.publicInput witness.data channel := by
@@ -721,62 +721,41 @@ theorem empty_soundChannels : (empty F PublicIO).SoundChannels [] := by
 theorem empty_tableSoundness : (empty F PublicIO).TableSoundness :=
   tableSoundness_of_soundChannels ⟨ [], List.Subset.refl [], empty_soundChannels ⟩
 
--- adding one entry to a SoundChannels ensemble preserves SoundChannels under some
--- easy-to-prove assumptions on what channels the new entry uses.
--- the entry's *kind* is irrelevant here: it changes how often the circuit is checked,
--- never which channels it talks on, so this covers flat and transition entries alike.
-theorem orderedChannels_of_soundChannels_addEntry (ens : Ensemble F PublicIO)
-  (entry : Entry F)
-  (fresh : entry.component.circuit.name ∉ ens.tables.map (·.component.circuit.name))
+-- adding one component to a SoundChannels ensemble preserves SoundChannels under some
+-- easy-to-prove assumptions on what channels the new component uses.
+/-- The component's *window* is irrelevant here: it changes how often the circuit is checked,
+never which channels it talks on, so this covers flat and transition components alike. -/
+theorem orderedChannels_of_soundChannels_addTable (ens : Ensemble F PublicIO)
+  (table : Component F) (fresh : table.circuit.name ∉ ens.tables.map (·.circuit.name))
   {finished : List (RawChannel F)} :
     -- given a sound channels ensemble with empty verifier,
     ens.SoundChannels finished →
     ens.verifier = .empty F PublicIO →
-    -- assuming that the new entry's channelsWithGuarantees are all finished
-    entry.component.circuit.channelsWithGuarantees ⊆ finished →
-    -- and that the entry's channelsWithRequirements contain none of the finished ones
+    -- assuming that the new table's channelsWithGuarantees are all finished
+    table.circuit.channelsWithGuarantees ⊆ finished →
+    -- and that the table's channelsWithRequirements contain none of the finished ones
     -- (so that we don't get new requirements to prove)
-    (∀ channel ∈ finished, channel ∉ entry.component.circuit.channelsWithRequirements) →
-    -- the ensemble with the new entry also satisfies SoundChannels!
-    (ens.addEntry entry fresh).OrderedChannels finished := by
+    (∀ channel ∈ finished, channel ∉ table.circuit.channelsWithRequirements) →
+    -- the ensemble with the new table also satisfies SoundChannels!
+    (ens.addTable table fresh).OrderedChannels finished := by
   intro h_sound verifier_empty grts_subset_finished reqs_disjoint_finished channel h_channel
   rw [OrderedChannel]
   constructor
   · left
     simp [verifier_empty, circuit_norm, Verifier.Program.empty]
   constructor
-  · rw [Ensemble.addEntry_tables, orderedChannel_cons]
+  · rw [Ensemble.addTable_tables, orderedChannel_cons]
     exact ⟨Or.inr (reqs_disjoint_finished channel h_channel),
       (h_sound.right.left channel h_channel).right.left,
       Or.inr (by
-        rw [List.flatMap_singleton, Air.Flat.entry_channelInterface_requirements]
+        rw [List.flatMap_singleton, Air.Flat.component_channelInterface_requirements]
         exact reqs_disjoint_finished channel h_channel)⟩
-  · rw [Ensemble.addEntry_verifier]
+  · rw [Ensemble.addTable_verifier]
     right
     simp [verifier_empty, circuit_norm, Verifier.Program.empty]
 
-theorem orderedChannels_of_soundChannels_addTable (ens : Ensemble F PublicIO)
-  (table : Component F) (fresh : table.circuit.name ∉ ens.tables.map (·.component.circuit.name))
-  {finished : List (RawChannel F)} :
-    ens.SoundChannels finished →
-    ens.verifier = .empty F PublicIO →
-    table.circuit.channelsWithGuarantees ⊆ finished →
-    (∀ channel ∈ finished, channel ∉ table.circuit.channelsWithRequirements) →
-    (ens.addTable table fresh).OrderedChannels finished :=
-  orderedChannels_of_soundChannels_addEntry ens { component := table, kind := .flat } fresh
-
-theorem orderedChannels_of_soundChannels_addTransitionTable (ens : Ensemble F PublicIO)
-  (table : Component F) (fresh : table.circuit.name ∉ ens.tables.map (·.component.circuit.name))
-  {finished : List (RawChannel F)} :
-    ens.SoundChannels finished →
-    ens.verifier = .empty F PublicIO →
-    table.circuit.channelsWithGuarantees ⊆ finished →
-    (∀ channel ∈ finished, channel ∉ table.circuit.channelsWithRequirements) →
-    (ens.addTransitionTable table fresh).OrderedChannels finished :=
-  orderedChannels_of_soundChannels_addEntry ens { component := table, kind := .transition } fresh
-
 theorem orderedChannels_of_soundChannels_merge (ens1 ens2 : Ensemble F PublicIO)
-  (unique_names : ((ens2.tables ++ ens1.tables).map (·.component.circuit.name)).Nodup)
+  (unique_names : ((ens2.tables ++ ens1.tables).map (·.circuit.name)).Nodup)
   {finished : List (RawChannel F)} :
     -- given a sound channels ensemble with empty verifier,
     ens1.SoundChannels finished →
@@ -790,7 +769,7 @@ theorem orderedChannels_of_soundChannels_merge (ens1 ens2 : Ensemble F PublicIO)
   rw [channelsWithRequirements_eq_verifier_append] at no_requirements
   simp only [List.mem_append, not_or, List.mem_flatMap] at no_requirements
   have no_table_requirements : ∀ table ∈ ens2.tables,
-      channel ∉ table.component.circuit.channelsWithRequirements := by
+      channel ∉ table.circuit.channelsWithRequirements := by
     intro table h_table h_requirement
     exact no_requirements.right ⟨table, h_table, h_requirement⟩
   rw [OrderedChannel]
@@ -802,12 +781,12 @@ theorem orderedChannels_of_soundChannels_merge (ens1 ens2 : Ensemble F PublicIO)
     exact ⟨
       orderedChannel_of_no_requirements (by
         intro table h_table
-        change channel ∉ table.component.circuit.channelsWithRequirements
+        change channel ∉ table.circuit.channelsWithRequirements
         exact no_table_requirements table h_table),
       (h_sound.right.left channel h_channel).right.left,
       orderedChannelLt_of_no_requirements (by
         intro table h_table
-        change channel ∉ table.component.circuit.channelsWithRequirements
+        change channel ∉ table.circuit.channelsWithRequirements
         exact no_table_requirements table h_table)⟩
   · rw [Ensemble.merge_tables, Ensemble.merge_verifier]
     right
@@ -837,7 +816,7 @@ theorem soundChannels_markFinished (ens : Ensemble F PublicIO)
       have no_table_guarantees : ∀ table ∈ ens.tables,
           channel ∉ (channelInterface table).channelsWithGuarantees := by
         intro table h_table
-        rw [Air.Flat.entry_channelInterface]
+        rw [Air.Flat.component_channelInterface]
         intro h_guarantee
         exact no_guarantees.right ⟨table, h_table, h_guarantee⟩
       exact ⟨Or.inl no_guarantees.left,
@@ -890,7 +869,7 @@ def addTable (soundEns : SoundEnsemble F PublicIO) (table : Component F)
       := by simp [circuit_norm])
     (reqs_disjoint_finished : ∀ channel ∈ soundEns.finished, channel ∉ table.circuit.channelsWithRequirements
       := by simp [circuit_norm])
-    (fresh : table.circuit.name ∉ soundEns.tables.map (·.component.circuit.name)
+    (fresh : table.circuit.name ∉ soundEns.tables.map (·.circuit.name)
       := by simp [circuit_norm])
     : SoundEnsemble F PublicIO where
   ensemble := soundEns.ensemble.addTable table fresh
@@ -904,46 +883,13 @@ def addTable (soundEns : SoundEnsemble F PublicIO) (table : Component F)
     soundEns.verifier_empty grts_subset_finished reqs_disjoint_finished
   verifier_empty := soundEns.verifier_empty
 
-/-- Add a component checked on *adjacent row pairs*, with the same channel side conditions as
-`addTable` -- those are about which channels the component uses, not how often it is checked. -/
-def addTransitionTable (soundEns : SoundEnsemble F PublicIO) (table : Component F)
-    (grts_subset_finished : table.circuit.channelsWithGuarantees ⊆ soundEns.finished
-      := by simp [circuit_norm])
-    (reqs_disjoint_finished :
-      ∀ channel ∈ soundEns.finished, channel ∉ table.circuit.channelsWithRequirements
-      := by simp [circuit_norm])
-    (fresh : table.circuit.name ∉ soundEns.tables.map (·.component.circuit.name)
-      := by simp [circuit_norm])
-    : SoundEnsemble F PublicIO where
-  ensemble := soundEns.ensemble.addTransitionTable table fresh
-  finished := soundEns.finished
-  finished_consistent := soundEns.finished_consistent
-  finished_subset := soundEns.finished_subset
-  subset_finished := by
-    have h := soundEns.subset_finished
-    simp_all [circuit_norm, Ensemble.channelsWithGuarantees_eq_verifier_append]
-  ordered_channels := soundEns.orderedChannels_of_soundChannels_addTransitionTable table fresh
-    soundEns.soundChannels soundEns.verifier_empty grts_subset_finished reqs_disjoint_finished
-  verifier_empty := soundEns.verifier_empty
-
 variable {soundEns : SoundEnsemble F PublicIO} {table : Component F}
     {gsf : table.circuit.channelsWithGuarantees ⊆ soundEns.finished}
     {rdf : ∀ channel ∈ soundEns.finished, channel ∉ table.circuit.channelsWithRequirements}
-    {fresh : table.circuit.name ∉ soundEns.tables.map (·.component.circuit.name)}
-
-@[circuit_norm] lemma addTransitionTable_tables :
-  (soundEns.addTransitionTable table gsf rdf fresh).tables =
-    { component := table, kind := .transition } :: soundEns.tables := rfl
-@[circuit_norm] lemma addTransitionTable_channels :
-  (soundEns.addTransitionTable table gsf rdf fresh).channels = soundEns.channels := rfl
-@[circuit_norm] lemma addTransitionTable_finished :
-  (soundEns.addTransitionTable table gsf rdf fresh).finished = soundEns.finished := rfl
-@[circuit_norm] lemma addTransitionTable_verifier :
-  (soundEns.addTransitionTable table gsf rdf fresh).verifier = soundEns.verifier := rfl
+    {fresh : table.circuit.name ∉ soundEns.tables.map (·.circuit.name)}
 
 @[circuit_norm] lemma addTable_tables :
-  (soundEns.addTable table gsf rdf fresh).tables =
-    { component := table, kind := .flat } :: soundEns.tables := rfl
+  (soundEns.addTable table gsf rdf fresh).tables = table :: soundEns.tables := rfl
 @[circuit_norm] lemma addTable_channels :
   (soundEns.addTable table gsf rdf fresh).channels = soundEns.channels := rfl
 @[circuit_norm] lemma addTable_finished :

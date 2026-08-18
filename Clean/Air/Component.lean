@@ -50,14 +50,40 @@ def DataRowAt (name : String) (Input : TypeMap) [ProvableType Input]
 /--
 An AIR component: a row circuit together with its fixed columns and residual assumptions.
 
-A component says nothing about how many trace rows its environment spans. A `Flat.Table` evaluates
-it against a single row; a `Transition.Table` evaluates it against two adjacent rows laid side by
-side. Communication with other components is expressed by channel interactions.
+A component *does* say how many trace rows its environment spans, via `windowRows`: 1 for a flat
+component checked against a single row, 2 for a transition component checked against two adjacent
+rows laid side by side. Communication with other components is expressed by channel interactions.
+
+The window is recorded here, on the object the verifier commits to, rather than as a separate tag
+on the ensemble entry. `window_size` ties it to the circuit's own cell footprint, which is what
+makes the reading of an environment derivable from the component instead of a prover choice.
+
+For a transition component the layout is what makes both completeness and the spec work out:
+
+    Input  = Row (width w)      cells [0, w)   -- row i,   prover-chosen via `witnessAny`
+    main allocates w cells      cells [w, 2w)  -- row i+1, pinned by local-witness completeness
+
+so the next row is the circuit's *output*, and `Spec input output` is the transition relation.
 -/
 structure Component (F : Type) [FiniteField F] where
   {Input : TypeMap} {Output : TypeMap}
   [provableInput : ProvableType Input] [provableOutput : ProvableType Output]
   circuit : GeneralFormalCircuit F Input Output
+  /-- How many trace rows one instantiation's environment spans. 1 = flat, 2 = transition. -/
+  windowRows : ℕ := 1
+  /-- The width of a single trace row. The circuit's footprint spans `windowRows` of them. -/
+  rowWidth : ℕ := circuit.size
+  /-- The circuit's cells tile exactly `windowRows` rows. This is the law that makes the window
+  derivable from the component, and it is why no separate `TableKind` tag is needed. -/
+  window_size : circuit.size = windowRows * rowWidth := by simp
+  windowRows_pos : 0 < windowRows := by simp
+  /-- The circuit's input occupies the low cells of the window's *first* row.
+
+  Not derivable from `window_size`: a component with `windowRows = 2`, `size Input = 10`,
+  `localLength = 0` and `rowWidth = 5` satisfies the tiling yet has its input spill across both
+  rows. The fixed-column and `ProverData` machinery are all stated about a single row's low
+  indices (`FixedRowAt`, `DataRowAt`, `inputRow`), so that must be ruled out. -/
+  input_le_rowWidth : size Input ≤ rowWidth := by simp [GeneralFormalCircuit.size_eq]
   /-- When present, identifies the fixed prefix available to the circuit on row `i`. -/
   fixedColumns : Option (FixedColumns F) := none
   /-- Assumptions still required from the enclosing ensemble after fixed-row and data facts. -/
@@ -102,9 +128,17 @@ def operations (component : Component F) : Operations F :=
 /-- The number of cells a single instantiation of the circuit commits: its input cells followed
 by its witnessed cells.
 
-For a flat table this is the width of a trace row. For a transition table it is likewise the width
-of a *row*, while the circuit's environment spans two of them. -/
-def rowWidth (component : Component F) : ℕ := component.circuit.size
+This spans the component's whole window, so it is `windowRows` rows wide. For a flat component
+that is exactly one trace row; for a transition component it is the two rows `curr ++ next`. -/
+def envWidth (component : Component F) : ℕ := component.windowRows * component.rowWidth
+
+/-- The circuit's footprint *is* its window. Restated from the `window_size` field so that callers
+can rewrite in either direction without unfolding the structure. -/
+@[circuit_norm] lemma envWidth_eq_size (component : Component F) :
+    component.envWidth = component.circuit.size := component.window_size.symm
+
+lemma envWidth_eq (component : Component F) :
+    component.envWidth = component.windowRows * component.rowWidth := rfl
 
 def committedWidth (component : Component F) : ℕ :=
   component.rowWidth - component.fixedWidth

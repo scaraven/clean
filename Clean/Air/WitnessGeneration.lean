@@ -556,11 +556,11 @@ private def padAndBalance (ensemble : Ensemble F PublicIO) (config : Config F Pr
       if tablesArePadded tables config.padding then return tables
       padAndBalance ensemble config prepared publicInput data fuel tables
 
-private structure AssembledTables (entries : List (Entry F)) where
-  tables : List (EntryTable F)
+private structure AssembledTables (entries : List (Component F)) where
+  tables : List (Table F)
   same_length : entries.length = tables.length
   same_circuits : ∀ index (hindex : index < entries.length),
-    entries[index] = tables[index].entry
+    entries[index] = tables[index].component
 
 private structure MatchedFixedRows (component : Component F) (rows : List (Array F)) where
   marker : Unit := ()
@@ -578,21 +578,24 @@ private def validateFixedRows (component : Component F) (rows : List (Array F)) 
 
 /-- Assemble generated rows into committed traces.
 
-Only flat entries are supported: generation for transition entries needs row `i+1` to be produced
-from row `i`, which this row-independent generator cannot express. Rather than commit a flat trace
-against a transition entry -- which `same_circuits` rightly rejects -- transition entries are
-refused here. -/
+Only components with `windowRows = 1` are supported: generation for a multi-row window needs row
+`i+1` to be produced from row `i`, which this row-independent generator cannot express. A
+component with a wider window is refused here rather than being committed as a row-per-environment
+trace, which would silently check the wrong relation.
+
+The guard is on the component's own `windowRows`, so there is no tag a caller could set
+inconsistently with the circuit's actual footprint: `Component.window_size` ties `windowRows` to
+`circuit.size`. -/
 private def assembleTables :
-    (entries : List (Entry F)) → List (GeneratedTable F) →
+    (entries : List (Component F)) → List (GeneratedTable F) →
       Except String (AssembledTables entries)
   | [], [] => .ok {
       tables := []
       same_length := rfl
       same_circuits := by simp
     }
-  | entry :: entries, generated :: generatedTables => do
-      if hkind : entry.kind = .flat then
-        let component := entry.component
+  | component :: entries, generated :: generatedTables => do
+      if component.windowRows = 1 then
         let rows := generated.rows.map (·.values)
         if h : ∀ row ∈ rows, row.size = component.width then
           match validateFixedRows component rows with
@@ -606,16 +609,12 @@ private def assembleTables :
             }
             let rest ← assembleTables entries generatedTables
             return {
-              tables := .flat table :: rest.tables
+              tables := table :: rest.tables
               same_length := by simp [rest.same_length]
               same_circuits := by
                 intro index hindex
                 cases index with
-                | zero =>
-                    show entry = EntryTable.entry (.flat table)
-                    simp only [EntryTable.entry, EntryTable.component_flat,
-                      EntryTable.kind_flat, ← hkind]
-                    rfl
+                | zero => rfl
                 | succ index =>
                     simp only [List.getElem_cons_succ]
                     exact rest.same_circuits index (by simp at hindex; omega)
@@ -623,14 +622,14 @@ private def assembleTables :
         else
           throw "generated table contains a row of the wrong width"
       else
-        throw "witness generation for transition tables is not supported yet"
+        throw "witness generation for multi-row-window components is not supported yet"
   | _, _ => .error "generated-table count does not match ensemble component count"
 
 /-- Execute channel-driven generation and construct a structurally valid ensemble witness. -/
 def generate (ensemble : Ensemble F PublicIO) (config : Config F ProverInput)
     (publicInput : PublicIO F) (proverInput : ProverInput F) :
     Except String (EnsembleWitness ensemble) :=
-  let prepared := ensemble.tables.map (fun entry => prepareComponent entry.component)
+  let prepared := ensemble.tables.map prepareComponent
   match validateModes prepared config.modes config.padding with
   | .error error => .error error
   | .ok () => match initializeTableInputs (toElements proverInput).toArray prepared config.modes with
@@ -660,10 +659,10 @@ def generate (ensemble : Ensemble F PublicIO) (config : Config F ProverInput)
 /-- Executable constraint check for the no-legacy-lookup initial milestone. -/
 def constraintsHold {ensemble : Ensemble F PublicIO} (witness : EnsembleWitness ensemble) : Bool :=
   witness.tables.all fun table =>
-    table.rows.all fun row =>
+    (RowEnvs.envs (F:=F) table witness.data).all fun env =>
       table.component.operations.lookups.isEmpty &&
       table.component.operations.constraints.all fun constraint =>
-        constraint.eval (Environment.fromArray row witness.data) == 0
+        constraint.eval env == 0
 
 /-- Executable balance check using the same normalized worklist representation. -/
 def channelsBalanced {ensemble : Ensemble F PublicIO} (witness : EnsembleWitness ensemble) : Bool :=
