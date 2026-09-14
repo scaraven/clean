@@ -92,6 +92,8 @@ lemma tag_eq_one_iff {d : Direction} : (d.tag : F) = 1 ↔ d = .receive := by
 @[circuit_norm]
 lemma tag_inj_iff {d d' : Direction} : (d.tag : F) = d'.tag ↔ d = d' := by
   cases d <;> cases d' <;> simp [tag]
+
+lemma tag_injective : Function.Injective (tag : Direction → F) := fun _ _ h => tag_inj_iff.mp h
 end Direction
 
 /-- A typed channel whose interactions carry an explicit direction. -/
@@ -270,6 +272,22 @@ lemma toRaw_requirements (env : Environment F) (i : DirectedInteraction channel)
     Vector.map_push, Vector.toArray_push, Array.back?_push, Vector.pop_push,
     ProvableType.fromElements_eval_toElements, Expression.eval, Direction.tag_inj_iff,
     Direction.eq_provide_or_eq_receive]
+
+lemma toRaw_inj {i j : DirectedInteraction channel} : i.toRaw = j.toRaw ↔ i = j := by
+  constructor; swap
+  · rintro rfl; rfl
+  intro h
+  rcases i with ⟨ direction, enabled, msg, assumeGuarantees ⟩
+  rcases j with ⟨ direction', enabled', msg', assumeGuarantees' ⟩
+  simp only [toRaw, AbstractInteraction.mk.injEq, DirectedInteraction.mk.injEq, true_and] at h ⊢
+  obtain ⟨ h_enabled, h_msg, h_assume ⟩ := h
+  have h_msg_eq := eq_of_heq h_msg
+  have h_pop := congrArg Vector.pop h_msg_eq
+  have h_back := congrArg (fun v : Vector (Expression F) _ => v.toArray.back?) h_msg_eq
+  simp only [Vector.pop_push] at h_pop
+  simp only [Vector.toArray_push, Array.back?_push, Option.some.injEq, Expression.const.injEq] at h_back
+  refine ⟨ Direction.tag_injective h_back, h_enabled, ?_, h_assume ⟩
+  rw [← ProvableType.fromElements_toElements msg, ← ProvableType.fromElements_toElements msg', h_pop]
 end DirectedInteraction
 
 /- ## Circuit operations -/
@@ -372,4 +390,86 @@ lemma eval_toRaw {i : DirectedInteraction channel} {env : Environment F} :
   simp only [circuit_norm, AbstractInteraction.eval, Interaction.mk.injEq, and_true, true_and]
   rw [ProvableType.toElements_eval, Vector.map_push]
   rfl
+
+/-- The guarantee of an evaluated directed interaction, in terms of the typed channel. -/
+lemma emittedValue_guarantees_iff {direction : Direction} {enabled : F} {msg : Message F}
+    {assumeGuarantees : Bool} {data : ProverData F} :
+    (channel.emittedValue direction enabled msg assumeGuarantees).Guarantees data ↔
+      (assumeGuarantees → direction = .receive → enabled ≠ 0 → channel.Guarantees msg data) := by
+  simp only [Interaction.Guarantees, emittedValue_msgVector]
+  simp [emittedValue, toRaw, Vector.toArray_push, Array.back?_push, Vector.pop_push,
+    ProvableType.fromElements_toElements, Direction.tag_inj_iff]
+
+/-- The requirement of an evaluated directed interaction, in terms of the typed channel. -/
+lemma emittedValue_requirements_iff {direction : Direction} {enabled : F} {msg : Message F}
+    {assumeGuarantees : Bool} {data : ProverData F} :
+    (channel.emittedValue direction enabled msg assumeGuarantees).Requirements data ↔
+      (enabled = 0 ∨ enabled = 1) ∧
+      (direction = .provide → enabled ≠ 0 → channel.Guarantees msg data) := by
+  simp only [Interaction.Requirements, emittedValue_msgVector]
+  simp [emittedValue, toRaw, Vector.toArray_push, Array.back?_push, Vector.pop_push,
+    ProvableType.fromElements_toElements, Direction.tag_inj_iff, Direction.eq_provide_or_eq_receive]
+
+/- ## The local contract, operation by operation -/
+
+section Contract
+variable {env : Environment F} {enabled : Expression F} {msg : Message (Expression F)}
+
+/-- A provider owes a boolean gate, and the guarantee exactly when active. -/
+lemma pushedIf_requirements_iff :
+    (channel.pushedIf enabled msg).Requirements env ↔
+      (Expression.eval env enabled = 0 ∨ Expression.eval env enabled = 1) ∧
+      (Expression.eval env enabled ≠ 0 → channel.Guarantees (eval env msg) env.data) := by
+  simp [circuit_norm]
+
+/-- A provider is granted nothing. -/
+lemma pushedIf_guarantees : (channel.pushedIf enabled msg).Guarantees env := by
+  simp [circuit_norm]
+
+/-- An active receiver may assume the guarantee. -/
+lemma pulledIf_guarantees_iff :
+    (channel.pulledIf enabled msg).Guarantees env ↔
+      (Expression.eval env enabled ≠ 0 → channel.Guarantees (eval env msg) env.data) := by
+  simp [circuit_norm]
+
+/-- A receiver owes only a boolean gate. -/
+lemma pulledIf_requirements_iff :
+    (channel.pulledIf enabled msg).Requirements env ↔
+      (Expression.eval env enabled = 0 ∨ Expression.eval env enabled = 1) := by
+  simp [circuit_norm]
+
+/-- A receiver that declines the guarantee is granted nothing ... -/
+lemma emitted_receive_guarantees : (channel.emitted .receive enabled msg).Guarantees env := by
+  simp [circuit_norm]
+
+/-- ... and still owes only a boolean gate. -/
+lemma emitted_receive_requirements_iff :
+    (channel.emitted .receive enabled msg).Requirements env ↔
+      (Expression.eval env enabled = 0 ∨ Expression.eval env enabled = 1) := by
+  simp [circuit_norm]
+
+/-- A disabled event is granted nothing. -/
+lemma guarantees_of_enabled_eq_zero (i : DirectedInteraction channel)
+    (h : Expression.eval env i.enabled = 0) : i.Guarantees env := by
+  simp [circuit_norm, h]
+
+/-- A disabled event owes nothing. -/
+lemma requirements_of_enabled_eq_zero (i : DirectedInteraction channel)
+    (h : Expression.eval env i.enabled = 0) : i.Requirements env := by
+  simp [circuit_norm, h]
+end Contract
+
+/- ## Exposing directed interactions -/
+
+/-- Expose the interactions of a circuit with a directed channel, for use in `exposedChannels`. -/
+def expose (channel : DirectedChannel F Message) (interactions : List (DirectedInteraction channel)) :
+    List (ExposedChannel F) :=
+  [{ channel := channel.toRaw, interactions := interactions.map (·.toRaw) }]
+
+@[circuit_norm ↓]
+lemma exposedChannelsLawful_expose (ops : Operations F) (channel : DirectedChannel F Message)
+    (interactions : List (DirectedInteraction channel)) :
+    ops.ExposedChannelsLawful (channel.expose interactions) ↔
+      ops.interactionsWith channel.toRaw = interactions.map (·.toRaw) := by
+  simp only [Operations.ExposedChannelsLawful, expose, List.mem_singleton, forall_eq]
 end DirectedChannel

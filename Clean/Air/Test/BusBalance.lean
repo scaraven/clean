@@ -6,11 +6,11 @@ import Mathlib.Tactic.NormNum.Prime
 # Bus balance acceptance tests
 
 Evidence for the acceptance items of the bus-balance roadmap that are within reach of the
-kernel and the balance models (A1–A6, A11, A13–A15, A17–A18), the legacy compatibility
-fixtures, and the Layer 0 prototype: one typed message, a provider, a receive with an
-assumption, a receive without an assumption, a gated event, and one ensemble whose statement
-takes an explicit balance model. The Consistency section shows what a balance model does on
-the channel encoding it reads, what it does on the other one, and which pairings the
+kernel, the balance models and the local contract (A1–A8, A11–A15, A17–A18), the legacy
+compatibility fixtures, and the Layer 0 prototype: one typed message, a provider, a receive
+with an assumption, a receive without an assumption, a gated event, and one ensemble whose
+statement takes an explicit balance model. The Consistency section shows what a balance model
+does on the channel encoding it reads, what it does on the other one, and which pairings the
 consistency obligation and the static tie `BalanceModel.Reads` admit.
 
 Two kinds of fixture are kept apart. An `example` whose type is `Prop` only checks that the
@@ -92,7 +92,7 @@ theorem legacy_length_le_one_over_F2 (l : List (Interaction (F 2))) :
   length_le_one_of_balancedInteractions_of_ringChar_eq_two (ZMod.ringChar_zmod_n 2)
 end Legacy
 
-/-! ## The directed tag representation (A1) -/
+/-! ## The directed tag representation and contract (A1, A12) -/
 section Directed
 variable {K : Type} [FiniteField K] [DecidableEq K]
 
@@ -134,10 +134,50 @@ def LegacyTwo : Channel (F 5) (fields 2) where
   "{\"type\":\"const\",\"value\":0}],\"multiplicity\":{\"type\":\"const\",\"value\":1}}"
 #guard (Lean.toJson ((OneChannel (F 5)).pushed 0).toRaw).compress ==
   (Lean.toJson (LegacyTwo.pushed #v[0, 0]).toRaw).compress
+
+/-- A12: an active provider owes the guarantee, and every provider owes a boolean gate. -/
+example (env : Environment K) (enabled x : Expression K) :
+    ((OneChannel K).pushedIf enabled x).Requirements env ↔
+      (Expression.eval env enabled = 0 ∨ Expression.eval env enabled = 1) ∧
+      (Expression.eval env enabled ≠ 0 → (OneChannel K).Guarantees (eval env x) env.data) := by
+  simp [circuit_norm]
+
+/-- A12: an active receiver may assume the guarantee and owes only the gate. -/
+example (env : Environment K) (enabled x : Expression K) :
+    (((OneChannel K).pulledIf enabled x).Guarantees env ↔
+      (Expression.eval env enabled ≠ 0 → (OneChannel K).Guarantees (eval env x) env.data)) ∧
+    (((OneChannel K).pulledIf enabled x).Requirements env ↔
+      (Expression.eval env enabled = 0 ∨ Expression.eval env enabled = 1)) := by
+  simp [circuit_norm]
+
+/-- A12: a receiver that declines the guarantee is granted nothing and owes only the gate,
+even on a channel whose guarantee is `False`. -/
+example (env : Environment K) (enabled x : Expression K) :
+    ((NeverDirected K).emitted .receive enabled x).Guarantees env ∧
+    (((NeverDirected K).emitted .receive enabled x).Requirements env ↔
+      (Expression.eval env enabled = 0 ∨ Expression.eval env enabled = 1)) := by
+  simp [circuit_norm, NeverDirected]
+
+/-- A12: a disabled event is granted nothing and owes nothing. -/
+example (env : Environment K) (i : DirectedInteraction (NeverDirected K))
+    (h : Expression.eval env i.enabled = 0) : i.Guarantees env ∧ i.Requirements env :=
+  ⟨DirectedChannel.guarantees_of_enabled_eq_zero i h,
+    DirectedChannel.requirements_of_enabled_eq_zero i h⟩
+
+/-- A4/A5 on the directed path: a receive of weight `2` violates the local contract,
+so no balance argument ever sees a non-unit event. -/
+example (data : ProverData (F 5)) :
+    ¬ ((OneChannel (F 5)).emittedValue .receive 2 1 true).Requirements data := by
+  rw [DirectedChannel.emittedValue_requirements_iff]
+  rintro ⟨h, -⟩
+  revert h
+  decide
 end Directed
 
-/-! ## Necessity of the kernel hypotheses (A2–A6) -/
+/-! ## Necessity of the kernel hypotheses (A2–A8) -/
 section Necessity
+
+def noData (F : Type) : ProverData F := fun _ _ => #[]
 
 /-- A throwaway legacy raw channel with trivial guarantees and requirements. -/
 def anyChannel (F : Type) [FiniteField F] : RawChannel F :=
@@ -252,6 +292,33 @@ theorem multiset_accepts_matched_pair :
 another instance of `legacy_length_le_one_over_F2`. -/
 theorem logUp_rejects_matched_pair : ¬ BalancedInteractions [provide1, receive1] :=
   fun h => absurd (legacy_length_le_one_over_F2 _ h) (by simp)
+
+def neverReceive : Interaction (F 2) := (NeverDirected (F 2)).emittedValue .receive 1 0 true
+def receiveTaggedPush : Interaction (F 2) :=
+  (NeverDirected (F 2)).emittedValue .receive 1 0 false
+def disabledPush : Interaction (F 2) := (NeverDirected (F 2)).emittedValue .provide 0 0 false
+
+/-- A7: the provider role is necessary for the bridge from a push's requirement to a pull's
+guarantee. A receive-tagged interaction satisfies its requirement trivially, matches the
+payload and is active, yet the receiver's guarantee is `False`. -/
+theorem bridge_provider_role_necessary :
+    receiveTaggedPush.directedEvent.active = true ∧
+    receiveTaggedPush.directedEvent.payload = neverReceive.directedEvent.payload ∧
+    receiveTaggedPush.Requirements (noData (F 2)) ∧
+    ¬ neverReceive.Guarantees (noData (F 2)) := by
+  simp only [receiveTaggedPush, neverReceive, DirectedChannel.directedEvent_emittedValue,
+    DirectedChannel.emittedValue_requirements_iff, DirectedChannel.emittedValue_guarantees_iff]
+  simp [NeverDirected]
+
+/-- A8: activity is necessary for the bridge. A disabled provider owes nothing. -/
+theorem bridge_activity_necessary :
+    disabledPush.directedEvent.direction = .provide ∧
+    disabledPush.directedEvent.payload = neverReceive.directedEvent.payload ∧
+    disabledPush.Requirements (noData (F 2)) ∧
+    ¬ neverReceive.Guarantees (noData (F 2)) := by
+  simp only [disabledPush, neverReceive, DirectedChannel.directedEvent_emittedValue,
+    DirectedChannel.emittedValue_requirements_iff, DirectedChannel.emittedValue_guarantees_iff]
+  simp [NeverDirected]
 end Necessity
 
 /-! ## Consistency under a model, and what happens under the wrong one (A15, A17) -/
