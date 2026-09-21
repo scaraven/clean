@@ -10,7 +10,8 @@ kernel and the balance models (A1–A6, A11, A13–A15, A17–A18), the legacy c
 fixtures, and the Layer 0 prototype: one typed message, a provider, a receive with an
 assumption, a receive without an assumption, a gated event, and one ensemble whose statement
 takes an explicit balance model. The Consistency section shows what a balance model does on
-the channel encoding it reads, and what it does on the other one.
+the channel encoding it reads, what it does on the other one, and which pairings the
+consistency obligation and the static tie `BalanceModel.Reads` admit.
 
 Two kinds of fixture are kept apart. An `example` whose type is `Prop` only checks that the
 new API elaborates with explicit parameters; it proves nothing about satisfiability. Every
@@ -280,8 +281,13 @@ theorem multiset_accepts_pPair (P : F 2 → Prop) :
   rw [BalanceModel.multiset_balanced_iff]
   simp [activePayloads, pProvide, pReceive, circuit_norm]
 
-/-- ... so the consistency of the channel under the multiset model, found by instance search,
-turns the requirements of the pair into the guarantee of the receive ... -/
+/-- ... so the pair's requirements give the receive's guarantee through the consistency of the
+channel under the multiset model, found by instance search. With two interactions this is
+`P 1 → P 1` once both sides are unfolded (`pPair_requirements_iff` below), so what the fixture
+shows is that the correct pairing resolves and that `ConsistentWith.consistent` composes on a
+goal that is refutable without the requirement; the transport itself is the general theorem
+`guarantees_of_requirements_of_pullsSupported`, whose pull-support hypothesis
+`transport_needs_support` shows to be load-bearing ... -/
 theorem pReceive_guarantees_of_requirements (P : F 2 → Prop) (data : ProverData (F 2))
     (reqs : ∀ i ∈ [pProvide P, pReceive P],
       i.channel = (PChannel P).toRaw ∧ i.Requirements data) :
@@ -296,6 +302,23 @@ theorem pPair_requirements_iff (P : F 2 → Prop) (data : ProverData (F 2)) :
   simp [pProvide, pReceive, PChannel, Interaction.Requirements, Interaction.msgVector,
     DirectedChannel.emittedValue, DirectedChannel.toRaw, Direction.tag, fromElements, field,
     ProvableType.fromElements, toElements, ProvableType.toElements]
+
+/-- The transport needs pull support: a lone active receive on the channel whose guarantee is
+`False` meets every requirement (boolean gate, well-formed tag, not a provider), and its
+guarantee is refutable. -/
+theorem transport_needs_support (data : ProverData (F 2)) :
+    (∀ i ∈ [pReceive (fun _ => False)],
+      i.channel = (PChannel (fun _ => False)).toRaw ∧ i.Requirements data) ∧
+    ¬ (pReceive (fun _ => False)).Guarantees data := by
+  refine ⟨?_, ?_⟩
+  · intro i hi
+    simp only [List.mem_singleton] at hi
+    subst hi
+    exact ⟨rfl, by
+      simp [pReceive, PChannel, Interaction.Requirements, Interaction.msgVector,
+        DirectedChannel.emittedValue, DirectedChannel.toRaw, Direction.tag]⟩
+  · rw [pReceive_guarantees_iff]
+    exact id
 
 /-- Correct pairings are found by instance search: directed channels under the multiset
 model over any field, in particular `F 2`, and legacy channels under LogUp. -/
@@ -350,6 +373,68 @@ theorem logUp_rejects_directed_pair :
   have := h provide5.msg
   revert this
   decide
+
+/-- That mismatch does not make the obligation false, it makes it vacuous. Under LogUp every
+directed gate is `0` or `1` and nothing cancels, so a LogUp-balanced list on a directed channel
+has no active interaction and every directed guarantee holds with a false premise. The
+obligation is therefore a theorem for every directed channel, over every field, whatever the
+guarantee. What excludes this pairing is not the obligation but that its statement is met only
+by inactive traces (`logUp_rejects_directed_pair` is the two-element instance) and the static
+tie `BalanceModel.Reads` below. -/
+theorem directed_consistentWith_logUp (channel : DirectedChannel K Message) :
+    channel.toRaw.ConsistentWith (.logUp K) := by
+  constructor
+  intro interactions data balanced reqs a a_mem
+  rw [BalanceModel.logUp_balanced_iff] at balanced
+  obtain ⟨guard, bal⟩ := balanced
+  -- every active interaction on the channel has gate `1`
+  have unit : ∀ i ∈ interactions, i.msg = a.msg → i.mult ≠ 0 → i.mult = 1 := by
+    intro i hi _ hne
+    have h := (reqs i hi).2
+    rw [Interaction.requirements_iff_of_channel_eq (reqs i hi).1] at h
+    rcases h.1 with h0 | h1
+    · exact absurd h0 hne
+    · exact h1
+  -- so the field sum for `a.msg` is the number of active interactions carrying it, and the
+  -- no-wrap guard turns "zero in the field" into "zero"
+  have hbal := bal a.msg
+  rw [balanceOf_eq_of_mult_or_zero unit, one_mul] at hbal
+  have hcount : interactions.countP (fun i => i.msg = a.msg && i.mult ≠ 0) = 0 :=
+    (natCast_eq_iff_of_le_of_lt_ringChar List.countP_le_length (Nat.zero_le _) guard).mp
+      (by rw [Nat.cast_zero]; exact hbal)
+  -- hence `a` is not active, and its guarantee holds vacuously
+  rw [Interaction.guarantees_iff_of_channel_eq (reqs a a_mem).1]
+  intro _ _ a_active
+  exfalso
+  rw [List.countP_eq_zero] at hcount
+  exact hcount a a_mem (by simp [a_active])
+
+/-- In particular for the directed channel whose guarantee is `False`. -/
+example : (NeverDirected (F 5)).toRaw.ConsistentWith (.logUp (F 5)) :=
+  directed_consistentWith_logUp _
+
+-- Instance search declares neither mismatch, so a builder that takes the obligation as an
+-- instance argument rejects both at compile time; only a hand-written instance gets past it.
+-- `#check_failure` succeeds exactly when elaboration fails; its report is dropped.
+#guard_msgs (drop info) in
+#check_failure (inferInstance : (LegacyChannel (p := 5)).toRaw.ConsistentWith (.multiset (F 5)))
+#guard_msgs (drop info) in
+#check_failure (inferInstance : (OneChannel (F 5)).toRaw.ConsistentWith (.logUp (F 5)))
+
+/-- The static tie: each model reads exactly one channel kind, over any field ... -/
+example : (BalanceModel.logUp K).Reads (Channel K) := inferInstance
+example : (BalanceModel.multiset K).Reads (DirectedChannel K) := inferInstance
+
+-- ... and a channel of the other kind is a type error, not a proposition anyone can prove.
+#guard_msgs (drop info) in
+#check_failure (inferInstance : (BalanceModel.logUp (F 2)).Reads (DirectedChannel (F 2)))
+#guard_msgs (drop info) in
+#check_failure (inferInstance : (BalanceModel.multiset (F 5)).Reads (Channel (F 5)))
+
+/-- The erasure through `Reads` is the channel's own `toRaw`, as `circuit_norm` sees it. -/
+example (channel : DirectedChannel K Message) :
+    BalanceModel.Reads.toRaw (model := .multiset K) channel = channel.toRaw := by
+  simp only [circuit_norm]
 end Consistency
 
 /-! ## The directed reading on malformed tags and on activity (A17) -/

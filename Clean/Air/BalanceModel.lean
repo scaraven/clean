@@ -30,16 +30,32 @@ the transport theorem, both below.
 ## A model only fits the encoding it reads
 
 A model and a channel are chosen independently, and after erasure to `RawChannel` nothing
-records which encoding a channel uses. The multiset model applied to a legacy channel strips
-the last payload element as if it were a tag, and accepts interactions whose messages never
-matched; the LogUp model applied to a directed channel is balanced only by inactive traces.
-`RawChannel.ConsistentWith` is the obligation that rules this out: balance under the model
-and the requirements of all interactions on the channel imply their guarantees. It is the
-legacy `RawChannel.Consistent` with the model as a parameter, it has exactly two instances
-(legacy-consistent channels under `logUp`, erased directed channels under `multiset`), and
-`FormalEnsembleWith` demands it of every channel. For a mismatched pairing no instance exists,
-and where the channel's guarantee says anything the obligation is false (see
-`legacy_not_consistentWith_multiset` in `Clean/Air/Test/BusBalance.lean`).
+records which encoding a channel uses. The two mismatched pairings fail differently. The
+multiset model applied to a legacy channel strips the last payload element as if it were a
+tag and accepts interactions whose messages never matched: a wrong relation that has
+witnesses. The LogUp model applied to a directed channel is satisfied only by traces with no
+active interaction, because every directed gate is `0` or `1` and nothing cancels: an empty
+relation, over which any soundness statement is vacuous.
+
+Two declarations tie a model to its encoding.
+
+* `RawChannel.ConsistentWith model` is the soundness obligation of one channel under a model:
+  balance under the model and the requirements of all interactions on the channel imply
+  their guarantees. It is the legacy `RawChannel.Consistent` with the model as a parameter,
+  it is declared for exactly the two supported pairings, and `FormalEnsembleWith` demands it
+  of every channel. Instance search finds it for a correct pairing and for neither mismatch.
+  As a proposition it is *false* for the multiset model on a legacy channel whose guarantee
+  is refutable (`legacy_not_consistentWith_multiset` in `Clean/Air/Test/BusBalance.lean`),
+  but *true* for the LogUp model on every directed channel, whatever the guarantee, precisely
+  because that relation admits no active interaction (`directed_consistentWith_logUp`, same
+  file). So the obligation alone does not exclude the vacuous pairing; a hand-written
+  instance would discharge it.
+* `BalanceModel.Reads model Ch` records the typed channel constructor `Ch` whose erasure a
+  model reads, with the erasure and the consistency law for it. It has the same two
+  instances (`logUp` reads `Channel`, `multiset` reads `DirectedChannel`) and is what the
+  model-aware builders (roadmap Layer 3) take channels through, so that a channel of the
+  wrong kind is a type error at the line that adds it, not a proposition somebody can prove.
+  Custom raw channels enter through the obligation directly.
 
 ## The two models
 
@@ -170,10 +186,8 @@ lemma directedEvent_emittedValue (direction : Direction) (enabled : F) (msg : Me
     (channel.emittedValue direction enabled msg assumeGuarantees).directedEvent =
       { payload := (toElements msg).toArray, direction, active := enabled ≠ 0 } := by
   cases direction
-  · simp [Interaction.directedEvent, emittedValue, Vector.toArray_push, Array.back?_push,
-      Array.pop_push, Direction.tag]
-    by_cases h : enabled = 0 <;> simp [h]
-  · simp [Interaction.directedEvent, emittedValue, Vector.toArray_push, Array.back?_push,
+  all_goals
+    simp [Interaction.directedEvent, emittedValue, Vector.toArray_push, Array.back?_push,
       Array.pop_push, Direction.tag]
     by_cases h : enabled = 0 <;> simp [h]
 
@@ -272,6 +286,44 @@ instance (channel : DirectedChannel F Message) : channel.toRaw.ConsistentWith (.
       ((BalanceModel.multiset F).pullsSupported_of_balanced balanced) reqs
 
 /-
+## The channel kind a model reads
+-/
+
+/--
+The typed channel constructor whose erasure a balance model reads, with the erasure and the
+consistency law for it. A builder that takes its channels as `Ch Message` and erases them
+through `toRaw` cannot be handed a channel of another kind: for a mismatched pairing there is
+no instance, so the call is a type error at the line that adds the channel. This is the static
+tie between models and channel kinds. `RawChannel.ConsistentWith` alone is not, since it is
+provable for the LogUp model on every directed channel.
+-/
+class BalanceModel.Reads (model : BalanceModel F)
+    (Ch : (Message : TypeMap) → [ProvableType Message] → Type) where
+  /-- Erasure of a typed channel of this kind to the raw channel the model reads. -/
+  toRaw {Message : TypeMap} [ProvableType Message] : Ch Message → RawChannel F
+  /-- Every channel of this kind is consistent under the model. -/
+  consistentWith {Message : TypeMap} [ProvableType Message] (channel : Ch Message) :
+    (toRaw channel).ConsistentWith model
+
+/-- The LogUp model reads legacy typed channels. -/
+instance : (BalanceModel.logUp F).Reads (Channel F) where
+  toRaw channel := channel.toRaw
+  consistentWith _ := inferInstance
+
+/-- The multiset model reads directed channels, over any field. -/
+instance : (BalanceModel.multiset F).Reads (DirectedChannel F) where
+  toRaw channel := channel.toRaw
+  consistentWith _ := inferInstance
+
+@[circuit_norm]
+lemma BalanceModel.logUp_reads_toRaw (channel : Channel F Message) :
+    BalanceModel.Reads.toRaw (model := .logUp F) channel = channel.toRaw := rfl
+
+@[circuit_norm]
+lemma BalanceModel.multiset_reads_toRaw (channel : DirectedChannel F Message) :
+    BalanceModel.Reads.toRaw (model := .multiset F) channel = channel.toRaw := rfl
+
+/-
 ## Model-aware ensemble statements
 
 These are the explicitly model-selected counterparts of `EnsembleWitness.BalancedChannels`,
@@ -327,11 +379,16 @@ end Ensemble
 /--
 A formal ensemble whose soundness proof is bound to an explicit balance model.
 
-`consistent` ties the model to the channels: the statement of an ensemble describes what the
-verifier enforces only if the model reads every channel in the encoding that channel uses.
-Instances exist for legacy channels under `logUp` and for directed channels under `multiset`,
-so for a correct pairing the field is found by instance search (`fun _ _ => inferInstance`
-after a case split on the channel list); for a mismatched pairing it cannot be supplied.
+`consistent` is the per-channel soundness obligation under the model. Instances exist for
+legacy channels under `logUp` and for directed channels under `multiset`, so for a correct
+pairing the field is found by instance search (`fun _ _ => inferInstance` after a case split
+on the channel list), and instance search finds nothing for either mismatch. It is not a proof
+that the model reads the channels' encoding: the multiset model on a legacy channel with a
+refutable guarantee makes it false, but the LogUp model on a directed channel makes it true
+for every guarantee, since that relation is met only by inactive traces, and a bundle built by
+hand for that pairing has a vacuous `soundness`. The model-aware builders avoid this by taking
+typed channels through `BalanceModel.Reads`; a bundle assembled by hand should come with a
+satisfiability witness for its statement.
 -/
 structure FormalEnsembleWith (F : Type) [FiniteField F] [DecidableEq F] (model : BalanceModel F)
     (PublicIO : TypeMap) [ProvableType PublicIO] where

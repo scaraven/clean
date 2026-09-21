@@ -4,11 +4,40 @@ import Clean.Circuit.DirectedChannel
 variable {F : Type} [FiniteField F] [DecidableEq F]
 variable {Message : TypeMap} [ProvableType Message]
 
-/-
-## Channel balance
+/-!
+# Channel balance
 
 This module treats channel interactions as multisets and asks what properties can be
-deduced from the condition of _balance_: that each element has multiplicity 0.
+deduced from the condition of _balance_. Its sections build on each other in this order:
+
+1. **Legacy balance** (`balanceOf`, `BalancedInteractions`, the counting lemmas,
+   `exists_push_of_pull`): the LogUp relation with its no-wrap guard, under the sign
+   convention where multiplicity `-1` is a receive and any other nonzero multiplicity a
+   provide.
+2. **Channel classes** (`RawChannel.Consistent`, `RawChannel.Normal`, `consistent_of_normal`):
+   what a channel's guarantee and requirement predicates must satisfy for balance to justify
+   the guarantees. Typed `Channel`s are normal by construction.
+3. **The shared kernel** (`Event`, `PullsSupported`, `activeCount`, `CountBalanced`,
+   `activePayloads`, `guarantees_of_requirements_of_count_eq`): the support and count facts
+   and the VM reversal argument, over natural-number counts, parametrized by a reading of
+   interactions as events, with no field structure at all.
+4. **Interactions on a known channel** (`Interaction.requirements_iff_of_channel_eq`,
+   `Interaction.guarantees_iff_of_channel_eq`): the contract of an interaction restated on the
+   channel it is known to use.
+5. **Legacy bridges** (`Interaction.legacyEvent`,
+   `pullsSupported_legacyEvent_of_balancedInteractions`,
+   `countBalanced_legacyEvent_of_balancedInteractions`, `count_eq_of_balancedInteractions`):
+   the kernel facts derived from `BalancedInteractions` under the sign reading.
+6. **The legacy VM theorem** (`guarantees_of_requirements_of_requirements_of_guarantees`),
+   now a wrapper around the kernel, followed by its zero-padded variant and the
+   `activeInteractions` machinery that variant needs.
+
+Legacy public API whose statements are unchanged: `balanceOf`, `BalancedInteractions`,
+`exists_push_of_pull`, `one_ne_neg_one`, `RawChannel.Consistent`, `RawChannel.Normal`,
+`consistent_of_normal`, `activeInteractions`, and the legacy VM theorem with its
+`_of_mult_zero_iff` variant, both minus a redundant characteristic binder (see their
+docstrings). The directed reading `Interaction.directedEvent`, the balance models and the
+consistency obligation are in `Clean.Air.BalanceModel`.
 -/
 
 /--
