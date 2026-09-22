@@ -17,10 +17,11 @@ deduced from the condition of _balance_. Its sections build on each other in thi
 2. **Channel classes** (`RawChannel.Consistent`, `RawChannel.Normal`, `consistent_of_normal`):
    what a channel's guarantee and requirement predicates must satisfy for balance to justify
    the guarantees. Typed `Channel`s are normal by construction.
-3. **The shared kernel** (`Event`, `PullsSupported`, `activeCount`, `CountBalanced`,
-   `activePayloads`, `guarantees_of_requirements_of_count_eq`): the support and count facts
-   and the VM reversal argument, over natural-number counts, parametrized by a reading of
-   interactions as events, with no field structure at all.
+3. **The shared kernel** (`Event`, `Event.key`, `PullsSupported`, `activeCount`,
+   `CountBalanced`, `activePayloads`, `perm_activePayloads_of_countBalanced`,
+   `count_eq_of_countBalanced`, `guarantees_of_requirements_of_count_eq`): the support and
+   count facts and the VM reversal argument, over natural-number counts, parametrized by a
+   reading of interactions as events, with no field structure at all.
 4. **Interactions on a known channel** (`Interaction.requirements_iff_of_channel_eq`,
    `Interaction.guarantees_iff_of_channel_eq`): the contract of an interaction restated on the
    channel it is known to use.
@@ -326,6 +327,20 @@ structure Event (F : Type) where
   direction : Direction
   active : Bool
 
+omit [FiniteField F] [DecidableEq F] in
+/-- The key under which the VM argument matches a receive with a provide: the payload of an
+active event, and `none` for an inactive one, so that disabled rows pair off among themselves. -/
+def Event.key (e : Event F) : Option (Array F) := if e.active then some e.payload else none
+
+omit [FiniteField F] [DecidableEq F] in
+@[circuit_norm] lemma Event.key_eq_some_iff {e : Event F} {payload : Array F} :
+    e.key = some payload ↔ e.active = true ∧ e.payload = payload := by
+  simp only [Event.key]; split_ifs <;> simp_all
+
+omit [FiniteField F] [DecidableEq F] in
+@[circuit_norm] lemma Event.key_eq_none_iff {e : Event F} : e.key = none ↔ e.active = false := by
+  simp only [Event.key]; split_ifs <;> simp_all
+
 /-- Every active receiver has an active provider of the same payload in the list. -/
 def PullsSupported {α : Type} (view : α → Event F) (l : List α) : Prop :=
   ∀ a ∈ l, (view a).direction = .receive → (view a).active = true →
@@ -395,6 +410,119 @@ theorem countBalanced_of_perm_activePayloads {l : List α} :
   intro perm payload
   rw [activeCount_eq_countP_activePayloads, activeCount_eq_countP_activePayloads]
   exact perm.countP_eq _
+
+omit [FiniteField F] in
+/-- Conversely, count balance is a permutation of the active provided and received payloads. -/
+theorem perm_activePayloads_of_countBalanced {l : List α} :
+    CountBalanced view l →
+    (activePayloads view l .provide).Perm (activePayloads view l .receive) := by
+  intro balance
+  rw [List.perm_iff_count]
+  intro payload
+  have h := balance payload
+  rw [activeCount_eq_countP_activePayloads, activeCount_eq_countP_activePayloads] at h
+  have count_eq (l : List (Array F)) : l.count payload = l.countP (· = payload) := by
+    rw [List.count_eq_countP]
+    exact List.countP_congr fun x _ => by simp
+  rw [count_eq, count_eq]
+  exact h
+
+omit [FiniteField F] [DecidableEq F] in
+lemma activePayloads_append (l₁ l₂ : List α) (direction : Direction) :
+    activePayloads view (l₁ ++ l₂) direction =
+      activePayloads view l₁ direction ++ activePayloads view l₂ direction := by
+  simp only [activePayloads, List.filter_append, List.map_append]
+
+omit [FiniteField F] [DecidableEq F] in
+lemma activePayloads_eq_nil_of_direction_ne {l : List α} {direction : Direction}
+    (h : ∀ a ∈ l, (view a).direction ≠ direction) :
+    activePayloads view l direction = [] := by
+  simp only [activePayloads, List.map_eq_nil_iff, List.filter_eq_nil_iff, Bool.and_eq_true,
+    decide_eq_true_eq, not_and]
+  intro a ha hdir
+  exact absurd hdir (h a ha)
+
+omit [FiniteField F] [DecidableEq F] in
+lemma length_activePayloads_of_direction {l : List α} {direction : Direction}
+    (h : ∀ a ∈ l, (view a).direction = direction) :
+    (activePayloads view l direction).length = l.countP fun a => (view a).active := by
+  simp only [activePayloads, List.length_map, ← List.countP_eq_length_filter]
+  apply List.countP_congr
+  intro a ha
+  simp [h a ha]
+
+omit [FiniteField F] in
+/--
+Count equality for the kernel's key, from count balance on `pulls ++ pushes` where the pulls
+are receives and the pushes are provides. For an active payload this is count balance itself,
+since the pulls contribute no provides and the pushes no receives; for the inactive key `none`
+it is that the two lists have the same length and, by count balance, the same number of active
+events. This is the directed counterpart of `count_eq_of_balancedInteractions`.
+-/
+theorem count_eq_of_countBalanced {pulls pushes : List α}
+    (balance : CountBalanced view (pulls ++ pushes))
+    (len : pulls.length = pushes.length)
+    (pulls_receive : ∀ a ∈ pulls, (view a).direction = .receive)
+    (pushes_provide : ∀ b ∈ pushes, (view b).direction = .provide) :
+    ∀ k : Option (Array F),
+      pulls.countP (fun a => (view a).key = k) = pushes.countP (fun b => (view b).key = k) := by
+  -- per payload: the active receives among the pulls are as many as the active provides among
+  -- the pushes
+  have active_eq (payload : Array F) :
+      pulls.countP (fun a => (view a).active && (view a).payload = payload) =
+        pushes.countP (fun b => (view b).active && (view b).payload = payload) := by
+    have h := balance payload
+    simp only [activeCount, List.countP_append] at h
+    have pulls_provide : pulls.countP (fun a =>
+        (view a).direction = .provide && (view a).active && (view a).payload = payload) = 0 := by
+      rw [List.countP_eq_zero]
+      intro a ha
+      simp [pulls_receive a ha]
+    have pushes_receive : pushes.countP (fun b =>
+        (view b).direction = .receive && (view b).active && (view b).payload = payload) = 0 := by
+      rw [List.countP_eq_zero]
+      intro b hb
+      simp [pushes_provide b hb]
+    rw [pulls_provide, pushes_receive, zero_add, add_zero] at h
+    calc pulls.countP (fun a => (view a).active && (view a).payload = payload)
+        = pulls.countP (fun a =>
+            (view a).direction = .receive && (view a).active && (view a).payload = payload) :=
+          List.countP_congr fun a ha => by simp [pulls_receive a ha]
+      _ = pushes.countP (fun b =>
+            (view b).direction = .provide && (view b).active && (view b).payload = payload) :=
+          h.symm
+      _ = pushes.countP (fun b => (view b).active && (view b).payload = payload) :=
+          List.countP_congr fun b hb => by simp [pushes_provide b hb]
+  -- in total: the active payloads of the pushes are a permutation of those of the pulls
+  have total_eq : pulls.countP (fun a => (view a).active) =
+      pushes.countP (fun b => (view b).active) := by
+    have perm := perm_activePayloads_of_countBalanced balance
+    rw [activePayloads_append, activePayloads_append,
+      activePayloads_eq_nil_of_direction_ne (l := pulls) (direction := .provide)
+        (fun a ha => by simp [pulls_receive a ha]),
+      activePayloads_eq_nil_of_direction_ne (l := pushes) (direction := .receive)
+        (fun b hb => by simp [pushes_provide b hb]),
+      List.nil_append, List.append_nil] at perm
+    rw [← length_activePayloads_of_direction pulls_receive,
+      ← length_activePayloads_of_direction pushes_provide]
+    exact perm.length_eq.symm
+  intro k
+  cases k with
+  | none =>
+    have h_pulls := List.length_eq_countP_add_countP (fun a => (view a).active) (l := pulls)
+    have h_pushes := List.length_eq_countP_add_countP (fun b => (view b).active) (l := pushes)
+    have e_pulls : pulls.countP (fun a => (view a).key = none) =
+        pulls.countP (fun a => ¬ (view a).active) :=
+      List.countP_congr fun a _ => by simp [Event.key_eq_none_iff]
+    have e_pushes : pushes.countP (fun b => (view b).key = none) =
+        pushes.countP (fun b => ¬ (view b).active) :=
+      List.countP_congr fun b _ => by simp [Event.key_eq_none_iff]
+    omega
+  | some payload =>
+    trans pulls.countP (fun a => (view a).active && (view a).payload = payload)
+    · exact List.countP_congr fun a _ => by simp [Event.key_eq_some_iff]
+    rw [active_eq payload]
+    exact List.countP_congr fun b _ => by simp [Event.key_eq_some_iff]
 
 /--
 The shared VM argument, with no field structure at all.

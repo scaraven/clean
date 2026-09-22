@@ -472,4 +472,29 @@ lemma exposedChannelsLawful_expose (ops : Operations F) (channel : DirectedChann
     ops.ExposedChannelsLawful (channel.expose interactions) ↔
       ops.interactionsWith channel.toRaw = interactions.map (·.toRaw) := by
   simp only [Operations.ExposedChannelsLawful, expose, List.mem_singleton, forall_eq]
+
+/-- Membership of a gated receive/provide pair in an exposed directed channel, for the VM
+tables' side conditions (`Air.Flat.DirectedVmTables.tables_channel`). -/
+@[circuit_norm]
+lemma mem_expose_pulledIf_pushedIf (enabled enabled' : Expression F)
+    (pull pull' push push' : Message (Expression F)) :
+    ⟨ channel.toRaw,
+      [(channel.pulledIf enabled pull).toRaw, (channel.pushedIf enabled push).toRaw] ⟩ ∈
+      channel.expose [channel.pulledIf enabled' pull', channel.pushedIf enabled' push'] ↔
+    enabled = enabled' ∧ pull = pull' ∧ push = push' := by
+  simp only [expose, List.mem_singleton, List.map_cons, List.map_nil, ExposedChannel.mk.injEq,
+    true_and, List.cons.injEq, and_true, DirectedInteraction.toRaw_inj, pulledIf, pushedIf,
+    DirectedInteraction.mk.injEq]
+  tauto
+
+/-- Membership of an unconditional receive/provide pair in an exposed directed channel, for
+the verifier's side condition (`Air.Flat.DirectedVmTables.verifier_channel`). -/
+@[circuit_norm]
+lemma mem_expose_pulled_pushed (pull pull' push push' : Message (Expression F)) :
+    ⟨ channel.toRaw, [(channel.pulled pull).toRaw, (channel.pushed push).toRaw] ⟩ ∈
+      channel.expose [channel.pulled pull', channel.pushed push'] ↔
+    pull = pull' ∧ push = push' := by
+  simp only [expose, List.mem_singleton, List.map_cons, List.map_nil, ExposedChannel.mk.injEq,
+    true_and, List.cons.injEq, and_true, DirectedInteraction.toRaw_inj, pulled, pushed,
+    DirectedInteraction.mk.injEq]
 end DirectedChannel

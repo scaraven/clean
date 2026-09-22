@@ -228,14 +228,23 @@ theorem guarantees_of_requirements_of_pullsSupported (channel : DirectedChannel 
   exact b_payload.symm
 end DirectedChannel
 
-/-- The multiset model: active provided and received payloads are a permutation of each
-other, in the directed reading. No side condition and no characteristic bound. -/
+/--
+The multiset model: active provided and received payloads are a permutation of each other, in
+the directed reading. No side condition and no characteristic bound.
+
+Its `UnitEvent` is the boolean-gate discipline: one interaction is one event when its gate is
+`0` or `1`. The relation does not depend on it (a gate of `2` reads as one active event, and the
+local contract of a directed channel is what rejects it), so it changes nothing the model
+accepts; it records the discipline under which the count derivation may be invoked, and the VM
+adapter (`Clean.Air.VmWith`) supplies it from the boolean gate that every directed interaction
+owes.
+-/
 def BalanceModel.multiset (F : Type) [FiniteField F] [DecidableEq F] : BalanceModel F where
   Verified l := (activePayloads Interaction.directedEvent l .provide).Perm
     (activePayloads Interaction.directedEvent l .receive)
   SideCondition _ := True
   view := Interaction.directedEvent
-  UnitEvent _ := True
+  UnitEvent i := i.mult = 0 ∨ i.mult = 1
   verified_of_perm := by
     intro l l' verified perm
     unfold activePayloads at *
@@ -250,6 +259,70 @@ theorem BalanceModel.multiset_balanced_iff (l : List (Interaction F)) :
       (activePayloads Interaction.directedEvent l .provide).Perm
         (activePayloads Interaction.directedEvent l .receive) := by
   simp [Balanced, multiset]
+
+@[circuit_norm] lemma BalanceModel.multiset_view :
+    (multiset F).view = Interaction.directedEvent := rfl
+
+@[circuit_norm] lemma BalanceModel.multiset_unitEvent_iff (i : Interaction F) :
+    (multiset F).UnitEvent i ↔ i.mult = 0 ∨ i.mult = 1 := Iff.rfl
+
+/-
+## The VM argument on a directed channel
+-/
+
+namespace DirectedChannel
+/--
+The VM argument for a directed channel, over any field: the directed counterpart of
+`guarantees_of_requirements_of_requirements_of_guarantees`. Given the receives `pulls` and the
+provides `pushes` of a channel's rows, paired by index, count balance on their concatenation
+(which the multiset model derives from its relation), and the per-row implications
+`G pulls[i] → R pushes[i]`, every row also satisfies the converse. The kernel does the
+induction; this theorem supplies the count equality (`count_eq_of_countBalanced`) and the
+bridge from a provide's requirement to a receive's guarantee on the same payload.
+
+`pulls_receive` is load-bearing: a provide among the pulls supplies a receive among the pulls
+without any row owing its guarantee (`pull_role_necessary` in the tests). `pushes_provide` is
+what the count-equality step consumes; a receive among the pushes would be matched by a
+provide among the pushes whose guarantee no pull needs, so the statement itself does not
+depend on it, but that argument is not the kernel's induction. It is kept so that the theorem
+is an instance of the kernel, and is flagged for review.
+-/
+theorem guarantees_of_requirements_of_requirements_of_guarantees
+    (channel : DirectedChannel F Message) (pulls pushes : List (Interaction F))
+    (balance : CountBalanced Interaction.directedEvent (pulls ++ pushes)) (data : ProverData F)
+    (n : ℕ) (len_pulls : pulls.length = n) (len_pushes : pushes.length = n)
+    (pulls_channel : ∀ a ∈ pulls, a.channel = channel.toRaw)
+    (pushes_channel : ∀ b ∈ pushes, b.channel = channel.toRaw)
+    (pulls_receive : ∀ a ∈ pulls, a.directedEvent.direction = .receive)
+    (pushes_provide : ∀ b ∈ pushes, b.directedEvent.direction = .provide) :
+    (∀ (i : ℕ) (hi : i < n), pulls[i].Guarantees data → pushes[i].Requirements data) →
+    ∀ (i : ℕ) (hi : i < n), pushes[i].Requirements data → pulls[i].Guarantees data := by
+  refine guarantees_of_requirements_of_count_eq (fun i => i.directedEvent.key)
+    (·.Guarantees data) (·.Requirements data) pulls pushes n len_pulls len_pushes
+    (count_eq_of_countBalanced balance (len_pulls.trans len_pushes.symm) pulls_receive
+      pushes_provide) ?_
+  intro a a_mem b b_mem key_eq b_req
+  -- the guarantee of `a` on `channel.toRaw` is conditional on the receive tag and an active gate
+  rw [Interaction.guarantees_iff_of_channel_eq (pulls_channel a a_mem)]
+  intro _ _ (a_active : a.mult ≠ 0)
+  -- `a` is active, so its key is its payload, and `b` is an active event with the same payload
+  have a_key : a.directedEvent.key = some a.msg.pop := by
+    simp [Event.key_eq_some_iff, Interaction.directedEvent_active,
+      Interaction.directedEvent_payload, a_active]
+  rw [a_key, Event.key_eq_some_iff, Interaction.directedEvent_active,
+    Interaction.directedEvent_payload, decide_eq_true_eq] at key_eq
+  obtain ⟨b_active, b_payload⟩ := key_eq
+  -- `b` is a provide, so its requirement establishes the guarantee on its payload
+  have b_provide := pushes_provide b b_mem
+  rw [Interaction.directedEvent_direction_eq_provide] at b_provide
+  rw [Interaction.requirements_iff_of_channel_eq (pushes_channel b b_mem)] at b_req
+  obtain ⟨-, -, b_grt⟩ := b_req
+  -- and the two payloads agree
+  convert b_grt b_provide b_active using 2
+  apply Vector.toArray_inj.mp
+  simp only [Vector.toArray_pop]
+  exact b_payload.symm
+end DirectedChannel
 
 /-
 ## Consistency of a channel under a model
