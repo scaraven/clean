@@ -44,4 +44,5 @@ import Clean.Gadgets.BLAKE3.FinalizeChunk
 import Clean.Examples.FibonacciWithChannels
 import Clean.Circuit.DirectedChannel
 import Clean.Air.BalanceModel
+import Clean.Air.VmWith
 import Clean.Gadgets.SHA256.SHA256Compress
