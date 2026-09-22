@@ -7,3 +7,4 @@ import Clean.Utils.Test.TestElaborateCircuit
 import Clean.Utils.Test.TestCircuitStructDeriving
 import Clean.Utils.Test.TestMixedCircuitType
 import Clean.Air.Test.BusBalance
+import Clean.Air.Test.BusBalanceEnsemble
