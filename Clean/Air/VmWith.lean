@@ -9,7 +9,14 @@ balance from `BalancedInteractions`, so it says nothing useful over a binary fie
 docstring of the legacy VM theorem in `Clean.Air.Balance`). This file is its counterpart for a
 VM whose state channel is a `DirectedChannel` and whose ensemble is balanced under the multiset
 model. The legacy file is untouched; the generic list lemmas it defines (`List.flattenPairs`,
-`List.zip_flattenPairs_perm`, ...) and `VmStep` are reused.
+`List.zip_flattenPairs_perm`, ...) and `VmStep` are reused. `DirectedVmTables` duplicates
+`VmTables` with the channel type changed rather than abstracting the channel kind (a class
+supplying the gated and ungated interactions and their evaluated forms over
+`BalanceModel.Reads`): removing the duplication that way would thread the abstraction through
+the legacy file, which stays untouched during the roadmap. As in the legacy construction,
+`SoundVmEnsembleWith` extends `Ensemble`, not `SoundEnsembleWith`: nothing is added after
+`addVm`. Lookup tables a VM relies on (a successor provider, a byte table) are added and
+finished before `addVm`, as the Fibonacci example does for its byte and add8 channels.
 
 `DirectedVmTables` mirrors `VmTables`: every table exposes a receive and a provide of the state
 channel gated by one `enabled` expression, the verifier receives the final state and provides
@@ -599,9 +606,6 @@ def addDirectedVm (ens : Ensemble F PublicIO) (vm : DirectedVmTables F PublicIO)
 @[circuit_norm] lemma addDirectedVm_verifier (ens : Ensemble F PublicIO)
     (vm : DirectedVmTables F PublicIO) :
   (ens.addDirectedVm vm).verifier = vm.verifier := rfl
-@[circuit_norm] lemma addDirectedVm_verifierTable (ens : Ensemble F PublicIO)
-    (vm : DirectedVmTables F PublicIO) :
-  (ens.addDirectedVm vm).verifierTable = vm.toEnsemble.verifierTable := rfl
 
 /-- Split up the witness of `Ensemble.addDirectedVm _ _`. -/
 lemma addDirectedVm_witness (ens : Ensemble F PublicIO) (vm : DirectedVmTables F PublicIO)
@@ -624,11 +628,11 @@ lemma addDirectedVm_witness (ens : Ensemble F PublicIO) (vm : DirectedVmTables F
 Soundness of a directed VM on top of a sound ensemble under the multiset model: the
 counterpart of `addVm_soundVmChannel_of_soundChannels`. The finished channels are handled as
 in the legacy construction, through the ordered-channel argument under the model; the state
-channel through the directed VM theorem.
+channel through the directed VM theorem. Unlike the legacy theorem, this one does not take the
+consistency of the finished channels separately: it is the third conjunct of `soundChannels`.
 -/
 theorem addDirectedVm_soundVmChannelWith_of_soundChannelsWith (ens : Ensemble F PublicIO)
     {finished : List (RawChannel F)} (soundChannels : ens.SoundChannelsWith (.multiset F) finished)
-    (consistent : ∀ channel ∈ finished, channel.ConsistentWith (.multiset F))
     (finished_subset : finished ⊆ ens.channels)
     (verifier_empty : ens.verifier = .empty F PublicIO)
     (vm : DirectedVmTables F PublicIO) :
@@ -732,7 +736,7 @@ theorem addDirectedVm_soundVmChannelWith_of_soundChannelsWith (ens : Ensemble F 
   have finished_grts : ∀ table ∈ vmWitness.allTables, ∀ channel ∈ finished,
       table.ChannelGuarantees channel := by
     intro table table_mem channel channel_mem
-    have : channel.ConsistentWith (.multiset F) := consistent channel channel_mem
+    have : channel.ConsistentWith (.multiset F) := soundChannels.2.2 channel channel_mem
     apply guarantees_of_requirements_append_with (ts := vmWitness.allTablesWitness)
       (ss := witness'.allTablesWitness) data_eq vm_constraints (reqs_disjoint _ channel_mem)
       (partial_balance _ channel_mem) (finished_reqs _ channel_mem) _ table_mem
@@ -763,15 +767,18 @@ end Ensemble
 namespace SoundEnsembleWith
 
 /-- Add a directed VM on top of a sound ensemble under the multiset model. The side conditions
-are the legacy ones and are decided by `simp [circuit_norm]` from the tables' metadata. The
-definition is in `circuit_norm` for the reason given at `SoundEnsembleWith.addTable`. -/
+are the legacy ones and are decided by `simp` with `circuit_norm` from the tables' metadata;
+as for the legacy `addVm`, the VM's own definitions have to be added to the simp set, and the
+guarantee-channel condition needs `simp +instances` to see through the circuits' explicit
+metadata (the default tactic includes it). The definition is in `circuit_norm` for the reason
+given at `SoundEnsembleWith.addTable`. -/
 @[circuit_norm]
 def addVm (ens : SoundEnsembleWith F (.multiset F) PublicIO) (vm : DirectedVmTables F PublicIO)
     (ne_mem_vm_channel : ∀ table ∈ ens.tables, vm.channel.toRaw ∉ table.circuit.channels
       := by simp [circuit_norm])
     (grts_subset_finished : vm.verifier.channelsWithGuarantees ⊆ vm.channel.toRaw :: ens.finished ∧
       ∀ table ∈ vm.tables, table.circuit.channelsWithGuarantees ⊆ vm.channel.toRaw :: ens.finished
-      := by simp [circuit_norm])
+      := by simp +instances [circuit_norm])
     (reqs_disjoint_finished :
       ∀ channel ∈ ens.finished, channel ∉ vm.verifier.channelsWithRequirements ∧
       ∀ table ∈ vm.tables, channel ∉ table.circuit.channelsWithRequirements
@@ -785,7 +792,7 @@ def addVm (ens : SoundEnsembleWith F (.multiset F) PublicIO) (vm : DirectedVmTab
     · infer_instance
     · exact ens.channels_consistent channel h_mem
   soundVmChannel := ens.ensemble.addDirectedVm_soundVmChannelWith_of_soundChannelsWith
-    ens.soundChannelsWith ens.finished_consistent ens.finished_subset ens.verifier_empty vm
+    ens.soundChannelsWith ens.finished_subset ens.verifier_empty vm
     ne_mem_vm_channel grts_subset_finished reqs_disjoint_finished
 
 variable {soundEns : SoundEnsembleWith F (.multiset F) PublicIO} {vm : DirectedVmTables F PublicIO}

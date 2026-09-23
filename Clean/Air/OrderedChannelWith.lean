@@ -14,7 +14,12 @@ argument depends on which model is used: the consistency obligation is exactly w
 induction consumes. The legacy file is untouched; its notions are the `BalanceModel.logUp`
 instances of these, by definition (`partialBalancedChannel_iff_partialBalancedChannelWith_logUp`,
 `Ensemble.tableSoundness_iff_tableSoundnessWith_logUp`) or pointwise
-(`SoundEnsemble.withLogUp`, `SoundEnsembleWith.toSoundEnsemble`).
+(`SoundEnsemble.withLogUp`, `SoundEnsembleWith.toSoundEnsemble`). The induction proofs are
+therefore duplicated between the two files. The legacy proofs could become one-line wrappers
+of these (the `Iff.rfl` lemmas and `consistent_iff_consistentWith_logUp` are what that takes),
+but only once the definitions of `Clean.Air.OrderedChannel` are split from its theorems, since
+this file imports that one; that restructuring is deferred, and until then a change to the
+argument (for instance the #452 capacity bridge) has to be made twice.
 
 ## The builders and the static tie
 
@@ -27,7 +32,15 @@ which `circuit_norm` rewrites to the channel's own `toRaw` so that the side cond
 `Reads.consistentWith`. A channel of the other kind is a type error at the line that adds it.
 Custom raw channels enter through `addRawChannel` and `addFinishedRawChannel`, gated on
 `[channel.ConsistentWith model]`; instance search declares that class for the two supported
-pairings only, so a hand-written instance is what a reviewer looks for there.
+pairings only, so a hand-written instance is what a reviewer looks for there. A second escape
+hatch is `SoundEnsemble.withLogUp`: the legacy `SoundEnsemble.addChannel` is unguarded and
+`withLogUp` takes the consistency of every channel as a proof term, and since
+`RawChannel.Consistent` is a theorem for every directed channel (`directed_consistentWith_logUp`
+in the tests), a directed channel can be carried under LogUp that way without any instance.
+Both routes produce the pairing whose statement is met only by inactive traces; a bundle built
+through either should come with a satisfiability witness, as `FormalEnsembleWith` asks of every
+hand-assembled bundle. A reviewer looks for a hand-written `ConsistentWith` instance and for
+the `consistent` argument of `withLogUp`.
 
 The record carries the consistency of every channel it holds (`channels_consistent`), not only
 of the finished ones, because `FormalEnsembleWith.consistent`, which `toFormal` fills, demands
@@ -402,6 +415,9 @@ theorem tableSoundnessWith_of_soundChannelsWith {ens : Ensemble F PublicIO} :
 theorem empty_soundChannelsWith : (empty F PublicIO).SoundChannelsWith model [] := by
   simp only [circuit_norm]
 
+theorem empty_tableSoundnessWith : (empty F PublicIO).TableSoundnessWith model :=
+  tableSoundnessWith_of_soundChannelsWith ⟨ [], List.Subset.refl [], empty_soundChannelsWith ⟩
+
 theorem orderedChannels_of_soundChannelsWith_addTable (ens : Ensemble F PublicIO)
     (table : Component F) {finished : List (RawChannel F)} :
     ens.SoundChannelsWith model finished →
@@ -701,7 +717,13 @@ end SoundEnsembleWith
 
 /-- A legacy sound ensemble whose channels are all consistent is a sound ensemble under the
 LogUp model. The consistency of every channel is owed because the model-aware record carries
-it for the bundle; the legacy record has it only for the finished channels. -/
+it for the bundle; the legacy record has it only for the finished channels.
+
+This is an escape hatch: the legacy `addChannel` is unguarded and `consistent` is a proof
+term, not an instance, so a directed channel (consistent under LogUp, see
+`directed_consistentWith_logUp` in the tests) can enter a LogUp ensemble here. The resulting
+statement is met only by inactive traces; a bundle built this way should come with a
+satisfiability witness. -/
 def SoundEnsemble.withLogUp (soundEns : SoundEnsemble F PublicIO)
     (consistent : ∀ channel ∈ soundEns.channels, channel.Consistent) :
     SoundEnsembleWith F (.logUp F) PublicIO where

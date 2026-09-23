@@ -1,5 +1,5 @@
 import Clean.Air.VmWith
-import Mathlib.Tactic.NormNum.Prime
+import Clean.Air.Test.BusBalance
 
 /-!
 # Bus balance: the models through ensemble soundness
@@ -13,46 +13,33 @@ VM built through `addVm` and `toFormal`; and the necessity fixtures of the hypot
 directed VM theorem and of the count adapter behind it.
 
 As in `Clean/Air/Test/BusBalance.lean`, an `example` whose type is `Prop` or a record is a
-typechecking test only; every semantic claim is a proved statement or a `#guard`.
+typechecking test only; every semantic claim is a proved statement or a `#guard`. The channel
+fixtures `OneChannel`, `NeverDirected`, `LegacyChannel` and the empty prover data `noData` are
+those of `BusBalance.lean`.
 -/
 
 namespace BusBalanceEnsembleTests
 open Air.Flat
-
-instance : Fact (Nat.Prime 5) := ⟨by norm_num⟩
-
-/-- A directed channel whose guarantee is that the message equals `1`. -/
-def OneChannel (F : Type) [FiniteField F] : DirectedChannel F field where
-  name := "one"
-  Guarantees x _ := x = 1
-
-/-- A directed channel whose guarantee can never be established. -/
-def NeverDirected (F : Type) [FiniteField F] : DirectedChannel F field where
-  name := "never-directed"
-  Guarantees _ _ := False
+open BusBalanceTests (OneChannel NeverDirected LegacyChannel noData)
 
 /-- A directed channel whose guarantee is free. -/
 def AnyDirected (F : Type) [FiniteField F] : DirectedChannel F field where
   name := "any-directed"
   Guarantees _ _ := True
 
-/-- A legacy channel with a nontrivial guarantee. -/
-def LegacyChannel (F : Type) [FiniteField F] : Channel F field where
-  name := "legacy"
-  Guarantees x _ := x = 7
-
 /-! ## The typed gate: a model accepts only the channel kind it reads -/
 section Gate
 variable {K : Type} [FiniteField K] [DecidableEq K]
 
 /-- The correct pairings elaborate over any field: a directed channel under the multiset
-model, a legacy channel under LogUp, whether added or added and finished. -/
+model, a legacy channel under LogUp (over any prime field, as `LegacyChannel` is stated),
+whether added or added and finished. -/
 example : SoundEnsembleWith K (.multiset K) unit :=
   SoundEnsembleWith.empty K (.multiset K) unit |>.addChannel (OneChannel K)
 example : SoundEnsembleWith K (.multiset K) unit :=
   SoundEnsembleWith.empty K (.multiset K) unit |>.addFinishedChannel (OneChannel K)
-example : SoundEnsembleWith K (.logUp K) unit :=
-  SoundEnsembleWith.empty K (.logUp K) unit |>.addFinishedChannel (LegacyChannel K)
+example {p : ℕ} [Fact p.Prime] : SoundEnsembleWith (F p) (.logUp (F p)) unit :=
+  SoundEnsembleWith.empty (F p) (.logUp (F p)) unit |>.addFinishedChannel (LegacyChannel (p := p))
 
 -- A channel of the other kind is a type error at the line that adds it, in both directions.
 -- `#check_failure` succeeds exactly when elaboration fails; its report is dropped.
@@ -60,7 +47,7 @@ example : SoundEnsembleWith K (.logUp K) unit :=
 #check_failure (SoundEnsembleWith.empty (F 2) (.logUp (F 2)) unit |>.addChannel (OneChannel (F 2)))
 #guard_msgs (drop info) in
 #check_failure (SoundEnsembleWith.empty (F 5) (.multiset (F 5)) unit
-  |>.addFinishedChannel (LegacyChannel (F 5)))
+  |>.addFinishedChannel (LegacyChannel (p := 5)))
 
 /-- The escape hatch takes a raw channel with a consistency instance ... -/
 example : SoundEnsembleWith K (.multiset K) unit :=
@@ -73,7 +60,7 @@ example : SoundEnsembleWith K (.multiset K) unit :=
   |>.addFinishedRawChannel (OneChannel (F 5)).toRaw)
 #guard_msgs (drop info) in
 #check_failure (SoundEnsembleWith.empty (F 5) (.multiset (F 5)) unit
-  |>.addFinishedRawChannel (LegacyChannel (F 5)).toRaw)
+  |>.addFinishedRawChannel (LegacyChannel (p := 5)).toRaw)
 
 /-- The erasure the builders record is the channel's own `toRaw`, as `circuit_norm` sees it. -/
 example :
@@ -209,7 +196,7 @@ theorem oneEnsemble_statement_over_F2 :
     simp [activePayloads, circuit_norm]
 end Ordered
 
-/-! ## A directed VM through `addVm` and `toFormal` (A14) -/
+/-! ## A directed VM through `addVm` and `toFormal` (A14; A9 in miniature) -/
 section Vm
 
 /-- A counter state channel with a free guarantee: this section exercises the VM builders,
@@ -280,38 +267,110 @@ def counterEnsemble (F : Type) [FiniteField F] [DecidableEq F] :
     |>.toFormal (fun _ _ => True) (by simp [circuit_norm, counterVm, counterStep])
 
 example : FormalEnsembleWith (F 2) (.multiset (F 2)) field := counterEnsemble (F 2)
+
+/-- One enabled step over `F 2`, from `0` to `1`: the row is `(enabled, n) = (1, 0)`. -/
+def stepTable : Table (F 2) where
+  component := ⟨ counterStep (F 2) ⟩
+  width := 2
+  table := [#[1, 0]]
+  data := fun _ _ => #[]
+  uniform_width := by simp
+
+/-- The witness with that one step and the final state `1` as public input. -/
+def counterWitness : EnsembleWitness (counterEnsemble (F 2)).ensemble where
+  tables := [stepTable]
+  data := fun _ _ => #[]
+  publicInput := 1
+  same_length := rfl
+  same_circuits := by
+    intro i hi
+    match i with
+    | 0 => rfl
+  same_data := by
+    intro table ht
+    simp only [List.mem_singleton] at ht
+    subst ht
+    rfl
+
+/-- Its four interactions on the state channel: the verifier receives `1` and provides `0`,
+the step receives `0` and provides `1`. -/
+theorem counterWitness_interactions :
+    counterWitness.allTablesWitness.interactionsWith (CounterChannel (F 2)).toRaw =
+      [ (CounterChannel (F 2)).emittedValue .receive 1 1 true,
+        (CounterChannel (F 2)).emittedValue .provide 1 0 false,
+        (CounterChannel (F 2)).emittedValue .receive 1 0 true,
+        (CounterChannel (F 2)).emittedValue .provide 1 1 false ] := by
+  have hv : (counterEnsemble (F 2)).ensemble.verifier = counterVerifier (F 2) := rfl
+  rw [EnsembleWitness.interactionsWith_allTablesWitness]
+  simp only [EnsembleWitness.interactionsWith, EnsembleWitness.allTables, List.flatMap_cons,
+    Table.interactionsWith, EnsembleWitness.verifierTable_flatMap,
+    EnsembleWitness.verifierTable_component, EnsembleWitness.verifierTable_environment,
+    Operations.interactionValuesWith_eq_map, Ensemble.verifierTable_interactionsWith,
+    Ensemble.verifierOperations, hv]
+  simp only [counterWitness, stepTable, List.flatMap_cons, List.flatMap_nil, List.append_nil,
+    Component.interactionsWith_eq]
+  simp [circuit_norm, counterStep, counterVerifier, DirectedChannel.eval_toRaw, Table.environment,
+    Environment.fromArray, Environment.fromInput, Component.rowOperations]
+  rfl
+
+/-- A9 for the VM path, in miniature: the statement of the counter ensemble under the multiset
+model is satisfied over `F 2` by a nonempty witness, one step from `0` to `1` with the final
+state `1` as public input and four interactions on the state channel (added in review). -/
+theorem counterEnsemble_statement_over_F2 :
+    (counterEnsemble (F 2)).ensemble.StatementWith (.multiset (F 2)) 1 := by
+  refine ⟨counterWitness, rfl, ?_, ?_⟩
+  · rw [EnsembleWitness.Constraints, EnsembleWitness.forall_mem_allTables_iff]
+    refine ⟨ ?_, ?_ ⟩
+    · rw [← EnsembleWitness.verifierConstraints_iff_verifierTable_constraints]
+      simp [Ensemble.VerifierConstraints, circuit_norm, counterEnsemble, counterVm,
+        counterVerifier]
+    · simp [counterWitness, stepTable, Table.Constraints, Component.constraints_eq,
+        Component.lookups_eq, circuit_norm, counterStep, Table.environment, Environment.fromArray]
+  · intro channel h_channel
+    simp only [counterEnsemble, counterVm, circuit_norm, List.mem_singleton] at h_channel
+    subst h_channel
+    rw [counterWitness_interactions, BalanceModel.multiset_balanced_iff]
+    simp [activePayloads, circuit_norm]
+    decide
 end Vm
 
 /-! ## Necessity of the hypotheses of the directed VM theorem (A7, A8 for Layer 3) -/
 section Necessity
 variable {K : Type} [FiniteField K] [DecidableEq K]
 
-def noData (F : Type) : ProverData F := fun _ _ => #[]
-
-/-- A receive of `x` that assumes the guarantee, a provide of `x`, and a disabled provide, on
-`OneChannel` over `F 2`. -/
+/-- A receive of `x` that assumes the guarantee, a provide of `x`, a disabled provide and a
+disabled receive, on `OneChannel` over `F 2`. -/
 def rec1 (x : F 2) : Interaction (F 2) := (OneChannel (F 2)).emittedValue .receive 1 x true
 def prov1 (x : F 2) : Interaction (F 2) := (OneChannel (F 2)).emittedValue .provide 1 x false
 def off1 : Interaction (F 2) := (OneChannel (F 2)).emittedValue .provide 0 0 false
+def recOff : Interaction (F 2) := (OneChannel (F 2)).emittedValue .receive 0 0 true
 
 /-- The lists of `pull_role_necessary`: a provide has been put among the pulls. -/
 def badPulls : List (Interaction (F 2)) := [prov1 0, rec1 0, rec1 1]
 def badPushes : List (Interaction (F 2)) := [prov1 1, off1, off1]
 
 /-- `pulls_receive` is load-bearing in the directed VM theorem: with a provide among the pulls,
-the lists are count-balanced, every row satisfies `G pulls[i] → R pushes[i]` (the provide
-among the pulls assumes nothing, so it forces the requirement of the provide of `1` opposite
-it, which holds), the second push is disabled and owes nothing, yet the second pull assumed
-`0 = 1`. The provide among the pulls supplied that receive without any push owing its
-guarantee. -/
+the lists are count-balanced, of equal length, on the channel, every push is a provide, every
+row satisfies `G pulls[i] → R pushes[i]` (the provide among the pulls assumes nothing, so it
+forces the requirement of the provide of `1` opposite it, which holds), the second push is
+disabled and owes nothing, yet the second pull assumed `0 = 1`. The provide among the pulls
+supplied that receive without any push owing its guarantee. Each fixture of this section
+states the hypotheses it keeps, so that it is a counterexample to dropping exactly one. -/
 theorem pull_role_necessary :
     CountBalanced Interaction.directedEvent (badPulls ++ badPushes) ∧
+    badPulls.length = 3 ∧ badPushes.length = 3 ∧
+    (∀ a ∈ badPulls, a.channel = (OneChannel (F 2)).toRaw) ∧
+    (∀ b ∈ badPushes, b.channel = (OneChannel (F 2)).toRaw) ∧
+    (∀ b ∈ badPushes, b.directedEvent.direction = .provide) ∧
     (∀ (i : ℕ) (hi : i < 3),
       badPulls[i].Guarantees (noData (F 2)) → badPushes[i].Requirements (noData (F 2))) ∧
     badPushes[1].Requirements (noData (F 2)) ∧ ¬ badPulls[1].Guarantees (noData (F 2)) := by
-  refine ⟨?_, ?_, ?_, ?_⟩
+  refine ⟨?_, rfl, rfl, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · apply countBalanced_of_perm_activePayloads
     simp [activePayloads, badPulls, badPushes, prov1, rec1, off1, circuit_norm]
+  · simp [badPulls, prov1, rec1, circuit_norm]
+  · simp [badPushes, prov1, off1, circuit_norm]
+  · simp [badPushes, prov1, off1, circuit_norm]
   · intro i hi
     match i with
     | 0 => simp [badPulls, badPushes, prov1, rec1, off1, OneChannel,
@@ -324,50 +383,70 @@ theorem pull_role_necessary :
   · simp [badPulls, rec1, OneChannel, DirectedChannel.emittedValue_guarantees_iff]
 
 /-- `balance` is load-bearing: an unbalanced pair, a receive of `0` that assumes against a
-disabled provide, satisfies the row implication vacuously and the disabled provide owes
-nothing, yet the receive assumed `0 = 1`. -/
+disabled provide, both on the channel and in their roles, satisfies the row implication
+vacuously and the disabled provide owes nothing, yet the receive assumed `0 = 1`. -/
 theorem balance_necessary :
     ¬ CountBalanced Interaction.directedEvent ([rec1 0] ++ [off1]) ∧
+    (rec1 0).channel = (OneChannel (F 2)).toRaw ∧ off1.channel = (OneChannel (F 2)).toRaw ∧
+    (rec1 0).directedEvent.direction = .receive ∧ off1.directedEvent.direction = .provide ∧
     ((rec1 0).Guarantees (noData (F 2)) → off1.Requirements (noData (F 2))) ∧
     off1.Requirements (noData (F 2)) ∧ ¬ (rec1 0).Guarantees (noData (F 2)) := by
-  refine ⟨?_, ?_, ?_, ?_⟩
+  refine ⟨?_, rfl, rfl, ?_, ?_, ?_, ?_, ?_⟩
   · intro h
     have := h (toElements (0 : field (F 2))).toArray
     rw [activeCount_eq_countP_activePayloads, activeCount_eq_countP_activePayloads] at this
     revert this
     simp [activePayloads, rec1, off1, circuit_norm]
+  · simp [rec1, circuit_norm]
+  · simp [off1, circuit_norm]
   · simp [rec1, off1, OneChannel, DirectedChannel.emittedValue_guarantees_iff,
       DirectedChannel.emittedValue_requirements_iff]
   · simp [off1, OneChannel, DirectedChannel.emittedValue_requirements_iff]
   · simp [rec1, OneChannel, DirectedChannel.emittedValue_guarantees_iff]
 
+/-- An active provide of `0` on the channel whose guarantee is free. -/
+def anyProv : Interaction (F 2) := (AnyDirected (F 2)).emittedValue .provide 1 0 false
+
 /-- `pushes_channel` is load-bearing: the directed reading is channel-blind, so a provide of
-`0` on the channel whose guarantee is free balances a receive of `0` on `OneChannel`; that
-provide owes nothing, and the receive assumed `0 = 1`. -/
+`0` on the channel whose guarantee is free balances a receive of `0` on `OneChannel`, in their
+roles, with the pull on the channel; that provide owes nothing, the row implication holds, and
+the receive assumed `0 = 1`. -/
 theorem pushes_channel_necessary :
-    CountBalanced Interaction.directedEvent
-      ([rec1 0] ++ [(AnyDirected (F 2)).emittedValue .provide 1 0 false]) ∧
-    ((AnyDirected (F 2)).emittedValue .provide 1 0 false).Requirements (noData (F 2)) ∧
-    ¬ (rec1 0).Guarantees (noData (F 2)) := by
-  refine ⟨?_, ?_, ?_⟩
+    CountBalanced Interaction.directedEvent ([rec1 0] ++ [anyProv]) ∧
+    (rec1 0).channel = (OneChannel (F 2)).toRaw ∧
+    (rec1 0).directedEvent.direction = .receive ∧ anyProv.directedEvent.direction = .provide ∧
+    ((rec1 0).Guarantees (noData (F 2)) → anyProv.Requirements (noData (F 2))) ∧
+    anyProv.Requirements (noData (F 2)) ∧ ¬ (rec1 0).Guarantees (noData (F 2)) := by
+  refine ⟨?_, rfl, ?_, ?_, ?_, ?_, ?_⟩
   · apply countBalanced_of_perm_activePayloads
-    simp [activePayloads, rec1, circuit_norm]
-  · simp [AnyDirected, DirectedChannel.emittedValue_requirements_iff]
+    simp [activePayloads, rec1, anyProv, circuit_norm]
+  · simp [rec1, circuit_norm]
+  · simp [anyProv, circuit_norm]
+  · simp [anyProv, AnyDirected, DirectedChannel.emittedValue_requirements_iff]
+  · simp [anyProv, AnyDirected, DirectedChannel.emittedValue_requirements_iff]
   · simp [rec1, OneChannel, DirectedChannel.emittedValue_guarantees_iff]
 
+/-- An active receive of `1`, assuming the guarantee, on the channel whose guarantee is
+`False`. -/
+def neverRec : Interaction (F 2) := (NeverDirected (F 2)).emittedValue .receive 1 1 true
+
 /-- `pulls_channel` is load-bearing: a receive of `1` on the channel whose guarantee is `False`
-balances a provide of `1` on `OneChannel`; that provide meets its requirement, and the receive
-assumed `False`. -/
+balances a provide of `1` on `OneChannel`, in their roles, with the push on the channel; that
+provide meets its requirement, the row implication holds, and the receive assumed `False`. -/
 theorem pulls_channel_necessary :
-    CountBalanced Interaction.directedEvent
-      ([(NeverDirected (F 2)).emittedValue .receive 1 1 true] ++ [prov1 1]) ∧
-    (prov1 1).Requirements (noData (F 2)) ∧
-    ¬ ((NeverDirected (F 2)).emittedValue .receive 1 1 true).Guarantees (noData (F 2)) := by
-  refine ⟨?_, ?_, ?_⟩
+    CountBalanced Interaction.directedEvent ([neverRec] ++ [prov1 1]) ∧
+    (prov1 1).channel = (OneChannel (F 2)).toRaw ∧
+    neverRec.directedEvent.direction = .receive ∧ (prov1 1).directedEvent.direction = .provide ∧
+    (neverRec.Guarantees (noData (F 2)) → (prov1 1).Requirements (noData (F 2))) ∧
+    (prov1 1).Requirements (noData (F 2)) ∧ ¬ neverRec.Guarantees (noData (F 2)) := by
+  refine ⟨?_, rfl, ?_, ?_, ?_, ?_, ?_⟩
   · apply countBalanced_of_perm_activePayloads
-    simp [activePayloads, prov1, circuit_norm]
+    simp [activePayloads, prov1, neverRec, circuit_norm]
+  · simp [neverRec, circuit_norm]
+  · simp [prov1, circuit_norm]
+  · simp [neverRec, NeverDirected, DirectedChannel.emittedValue_guarantees_iff]
   · simp [prov1, OneChannel, DirectedChannel.emittedValue_requirements_iff]
-  · simp [NeverDirected, DirectedChannel.emittedValue_guarantees_iff]
+  · simp [neverRec, NeverDirected, DirectedChannel.emittedValue_guarantees_iff]
 
 /-- The hypotheses of the count adapter `count_eq_of_countBalanced`: without equal lengths, an
 inactive push has no partner ... -/
@@ -396,20 +475,24 @@ theorem count_eq_pulls_receive_necessary :
   · simp [off1, circuit_norm]
   · simp [prov1, rec1, off1, circuit_norm]
 
-/-- ... and without `pushes_provide`, symmetrically. -/
+/-- ... and without `pushes_provide`, an active receive among the pushes is counted on the push
+side under its payload key: two disabled receives against a provide and a receive of `0` are
+count-balanced, of equal length, and all pulls are receives, yet the key `[0]` counts `0` on
+the pull side and `2` on the push side. (The first version of this fixture put two disabled
+provides among the pulls, which drops `pulls_receive` as well; corrected in review.) -/
 theorem count_eq_pushes_provide_necessary :
-    CountBalanced Interaction.directedEvent ([off1, off1] ++ [rec1 0, prov1 0]) ∧
-    ([off1, off1] : List (Interaction (F 2))).length = [rec1 0, prov1 0].length ∧
-    (∀ a ∈ [off1, off1], a.directedEvent.direction = .receive → False) ∧
-    [off1, off1].countP
+    CountBalanced Interaction.directedEvent ([recOff, recOff] ++ [prov1 0, rec1 0]) ∧
+    ([recOff, recOff] : List (Interaction (F 2))).length = [prov1 0, rec1 0].length ∧
+    (∀ a ∈ [recOff, recOff], a.directedEvent.direction = .receive) ∧
+    [recOff, recOff].countP
         (fun a => a.directedEvent.key = some (toElements (0 : field (F 2))).toArray) ≠
-      [rec1 0, prov1 0].countP
+      [prov1 0, rec1 0].countP
         (fun b => b.directedEvent.key = some (toElements (0 : field (F 2))).toArray) := by
   refine ⟨?_, rfl, ?_, ?_⟩
   · apply countBalanced_of_perm_activePayloads
-    simp [activePayloads, prov1, rec1, off1, circuit_norm]
-  · simp [off1, circuit_norm]
-  · simp [prov1, rec1, off1, circuit_norm]
+    simp [activePayloads, prov1, rec1, recOff, circuit_norm]
+  · simp [recOff, circuit_norm]
+  · simp [prov1, rec1, recOff, circuit_norm]
 end Necessity
 
 end BusBalanceEnsembleTests

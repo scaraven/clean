@@ -235,9 +235,12 @@ the directed reading. No side condition and no characteristic bound.
 Its `UnitEvent` is the boolean-gate discipline: one interaction is one event when its gate is
 `0` or `1`. The relation does not depend on it (a gate of `2` reads as one active event, and the
 local contract of a directed channel is what rejects it), so it changes nothing the model
-accepts; it records the discipline under which the count derivation may be invoked, and the VM
-adapter (`Clean.Air.VmWith`) supplies it from the boolean gate that every directed interaction
-owes.
+accepts; it records the discipline under which the count derivation `countBalanced_of_balanced`
+should be invoked. The discipline is a convention, not an enforcement: `Verified` is a
+permutation of active payloads and `countBalanced_of_perm_activePayloads` is public, so count
+balance is available from `Verified` alone. The VM adapter (`Clean.Air.VmWith`) goes through
+`countBalanced_of_balanced` and supplies the gate fact from the row constraints
+(`DirectedVmTables.tables_channel`), which make every step's gate boolean.
 -/
 def BalanceModel.multiset (F : Type) [FiniteField F] [DecidableEq F] : BalanceModel F where
   Verified l := (activePayloads Interaction.directedEvent l .provide).Perm
@@ -260,9 +263,6 @@ theorem BalanceModel.multiset_balanced_iff (l : List (Interaction F)) :
         (activePayloads Interaction.directedEvent l .receive) := by
   simp [Balanced, multiset]
 
-@[circuit_norm] lemma BalanceModel.multiset_view :
-    (multiset F).view = Interaction.directedEvent := rfl
-
 @[circuit_norm] lemma BalanceModel.multiset_unitEvent_iff (i : Interaction F) :
     (multiset F).UnitEvent i ↔ i.mult = 0 ∨ i.mult = 1 := Iff.rfl
 
@@ -282,10 +282,14 @@ bridge from a provide's requirement to a receive's guarantee on the same payload
 
 `pulls_receive` is load-bearing: a provide among the pulls supplies a receive among the pulls
 without any row owing its guarantee (`pull_role_necessary` in the tests). `pushes_provide` is
-what the count-equality step consumes; a receive among the pushes would be matched by a
-provide among the pushes whose guarantee no pull needs, so the statement itself does not
-depend on it, but that argument is not the kernel's induction. It is kept so that the theorem
-is an instance of the kernel, and is flagged for review.
+what the count-equality step consumes (`count_eq_pushes_provide_necessary`: an active receive
+among the pushes is counted on the push side under its payload key), but the statement of this
+theorem holds without it: an active receive assuming a refutable guarantee can never sit among
+the pushes, because every active provide of a refutable payload faces, by the row implication,
+a pull that assumed that refutable guarantee, and count balance then leaves no such receive
+for the pushes. That is a global count, not the kernel's induction. The hypothesis is kept so
+that the theorem is an instance of the kernel (decided 2026-09-23; the one recorded exception
+to the rule that a hypothesis needs a counterexample to the statement it sits on).
 -/
 theorem guarantees_of_requirements_of_requirements_of_guarantees
     (channel : DirectedChannel F Message) (pulls pushes : List (Interaction F))
