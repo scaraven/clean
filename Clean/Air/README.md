@@ -36,6 +36,90 @@ The library currently provides two distinct arguments to establish soundness, co
 
 `Vm.lean` contains a construction aimed at "VM-like" components that perform one transition per row. Since VM components both pull from and push to one distinguished state channel, they cannot follow the theory of ordered lookup-channel soundness. Instead, we prove a dedicated soundness theorem that applies to a set of VM components added to an existing hierarchical ensemble; a typical modern zkVMs layout.
 
+## Channel contracts and the bus export protocol
+
+Clean has two kinds of typed channel. They differ in how a row's interaction carries its
+direction, in what a row must prove and may assume, and in the relation the verifier enforces
+on the bus. Legacy channels are the default; directed channels are opt-in and exist because the
+legacy contract says nothing useful over a field of characteristic two (`−1 = 1`, so a signed
+multiplicity cannot tell a provide from a receive, and `1 + 1 = 0`, so two unmatched sends
+cancel).
+
+### Legacy channels (`Channel`, `Clean/Circuit/Channel.lean`)
+
+An interaction has a signed multiplicity `m` and a message. The sign is the direction: `−1` is a
+receive, any other nonzero value a provide. For a channel with guarantee `G`, evaluated at a
+row:
+
+| operation | bus contribution | may assume `G msg`? | must prove locally |
+| --- | --- | --- | --- |
+| `push msg` | `+1` | no | `G msg` |
+| `pull msg` | `−1` | yes | nothing |
+| `emit m msg` | `m` | no | `G msg` if `m ∉ {0, −1}` |
+| `emit 0 msg` | zero | no | nothing |
+
+`emit (−1) msg` is a receive that assumes nothing and owes nothing; sp1-lean's memory readers use
+`emit (±is_real)` in this style. The raw requirement is `m ≠ −1 → m ≠ 0 → G msg`; the `−1`
+exemption does not extend to other negative weights. The verifier enforces the LogUp relation:
+for every message, the field sum of the multiplicities is `0`, under the no-wrap guard that the
+channel's interaction list is shorter than the characteristic (`BalancedInteractions`,
+`BalanceModel.logUp`). A weighted `emit` participates in that sum with its weight; only unit
+multiplicities give a count of events.
+
+### Directed channels (`DirectedChannel`, `Clean/Circuit/DirectedChannel.lean`)
+
+An interaction has a direction, a gate and a message. The direction is stored as one extra raw
+message element, the tag (`0` provide, `1` receive); the gate is the raw multiplicity and must
+be `0` or `1`; one enabled interaction is one bus event. Permission to use the guarantee is
+separate from the direction:
+
+| operation | direction | may assume `G msg`? | must prove locally |
+| --- | --- | --- | --- |
+| `pushIf enabled msg` | provide | no | `enabled ∈ {0, 1}`, and `G msg` if `enabled ≠ 0` |
+| `pullIf enabled msg` | receive | yes, if `enabled ≠ 0` | `enabled ∈ {0, 1}` |
+| `emit .receive enabled msg` | receive | no | `enabled ∈ {0, 1}` |
+| `emit .provide enabled msg` | provide | no | as `pushIf` |
+| any, with `enabled = 0` | either | no | nothing beyond the gate |
+
+`push`/`pull` are the `enabled = 1` cases. A receive that declines the guarantee still counts on
+the receiving side of the bus. The verifier enforces the multiset relation: the payloads of the
+active provides are a permutation of the payloads of the active receives, counted in the
+natural numbers, with the tag removed before payloads of opposite direction are compared
+(`BalanceModel.multiset` under the reading `Interaction.directedEvent`). There is no
+characteristic condition. A raw interaction whose tag is neither value fails the channel's
+requirements, so no sound row produces one.
+
+### Ensemble soundness, per kind
+
+A lookup-style ensemble on either kind is built with the model-aware builders of
+`OrderedChannelWith.lean` (`SoundEnsembleWith F model PublicIO`), which accept a channel only
+of the kind the model reads (`BalanceModel.Reads`); a VM on a directed state channel with
+`VmWith.lean`. The legacy `SoundEnsemble` and `VmTables` remain for LogUp ensembles. In both
+cases the soundness theorem's premise is "every channel is balanced under the model", so it
+holds of a deployed system only if the backend enforces that model's relation on that
+channel's interactions.
+
+### The bus export protocol (`Clean/Air/BusProtocol.lean`)
+
+The JSON of an interaction (`Clean/Circuit/Json.lean`) is the same for both kinds: a channel
+name, a multiplicity and a message, with a directed interaction's tag as the last message
+element. Those bytes are unchanged and do not say which relation applies. The bus export
+protocol, version 1, binds the interpretation beside them:
+
+- a `ChannelSchema` per channel: its name, its raw arity, and its layout, `signed` (legacy: the
+  message is the payload, the multiplicity a signed weight, relation `logup`) or `directed`
+  (the message is the payload followed by the tag at index `arity − 1`, tags `provide = 0` and
+  `receive = 1`, the multiplicity a `0`/`1` gate, relation `multiset` on the tag-stripped
+  payloads, a tag outside `{0, 1}` rejected);
+- a `BusProtocol` per ensemble: the version, the balance model (by its layout, one model per
+  ensemble), and the channel schemas; `WellFormed` checks by `decide` that every channel has
+  the layout the model reads.
+
+Schemas come from the typed channels (`Channel.schema`, `DirectedChannel.schema`), the model's
+layout from `BalanceModel.Protocol`, and each clause of the directed layout is a proved fact
+about the encoding (tag index, payload size, gate and tag rules; see the module). A backend
+that implements the schema enforces exactly the relation the Lean proofs assume.
+
 ## Relation To Clean/Table
 
 `Clean/Table` is the older table infrastructure. Its `InductiveTable` interface models classic AIRs where a row transition may directly relate adjacent rows, by putting the output of one VM step in the same relative position as the input of the next step. `Clean.Air.Flat` instead models the modern one-row style: each component checks a single row in isolation, and all cross-row or cross-component structure is mediated by channels. The two layers are currently independent, but `Clean.Air` is intended to become the common home for AIR-style infrastructure, including future support for the older inductive table style now living under `Clean/Table`.
