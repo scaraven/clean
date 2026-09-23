@@ -45,4 +45,5 @@ import Clean.Examples.FibonacciWithChannels
 import Clean.Circuit.DirectedChannel
 import Clean.Air.BalanceModel
 import Clean.Air.VmWith
+import Clean.Air.BusProtocol
 import Clean.Gadgets.SHA256.SHA256Compress

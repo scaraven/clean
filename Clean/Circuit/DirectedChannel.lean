@@ -22,12 +22,13 @@ interaction is an ordinary `AbstractInteraction` inside `FlatOperation.interact`
 (`AbstractInteraction.eval` maps the tag together with the payload) and export (the tag is the
 last element of the exported message).
 
-The export is only a serialization shape. The raw JSON of a directed interaction is the legacy
-channel/message/multiplicity object with one more message element, so it does not identify
-the directed interpretation: a legacy interaction whose payload is one element longer has the
-same JSON. An opt-in export protocol that binds the interpretation (protocol version, balance
-model, tag removal before payloads of opposite direction are compared, gate and malformed-tag
-handling) is scheduled by the bus-balance roadmap and does not exist yet.
+The JSON of an interaction is only a serialization shape. The raw JSON of a directed interaction
+is the legacy channel/message/multiplicity object with one more message element, so it does not
+by itself identify the directed interpretation: a legacy interaction whose payload is one
+element longer has the same JSON. The interpretation is bound beside the interactions by the
+bus export protocol of `Clean.Air.BusProtocol` (a per-channel schema with the layout, the tag
+index and the gate and malformed-tag rules, under a protocol version and the ensemble's
+balance model); the interaction bytes are unchanged by it.
 
 ## Malformed tags
 

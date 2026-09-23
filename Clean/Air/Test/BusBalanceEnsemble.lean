@@ -1,4 +1,5 @@
 import Clean.Air.VmWith
+import Clean.Air.BusProtocol
 import Clean.Air.Test.BusBalance
 
 /-!
@@ -494,5 +495,60 @@ theorem count_eq_pushes_provide_necessary :
   · simp [recOff, circuit_norm]
   · simp [prov1, rec1, recOff, circuit_norm]
 end Necessity
+
+/-! ## The bus export protocol (A19) -/
+section Protocol
+variable {K : Type} [FiniteField K] [DecidableEq K]
+
+-- A19: the schema of a directed channel identifies the interpretation the interaction bytes
+-- do not carry: the relation, the tag index, the two tags, the gate and the malformed-tag
+-- rule; its arity is the raw arity the interactions carry.
+#guard (Lean.toJson (OneChannel (F 5)).schema).compress ==
+  "{\"arity\":2,\"channel\":\"one\",\"malformed_tag\":\"reject\",\"multiplicity\":\"gate\"," ++
+  "\"payload_arity\":1,\"relation\":\"multiset\",\"tag_index\":1," ++
+  "\"tags\":{\"provide\":0,\"receive\":1}}"
+
+-- A legacy channel's schema names the signed layout and the LogUp relation.
+#guard (Lean.toJson (LegacyChannel (p := 5)).schema).compress ==
+  "{\"arity\":1,\"channel\":\"legacy\",\"multiplicity\":\"signed\",\"relation\":\"logup\"}"
+
+-- The protocol object binds the version and the ensemble's model to its channels.
+#guard (Lean.toJson (BusProtocol.ofModel (.multiset (F 5)) [(OneChannel (F 5)).schema])).compress ==
+  "{\"balance\":\"multiset\",\"channels\":[{\"arity\":2,\"channel\":\"one\"," ++
+  "\"malformed_tag\":\"reject\",\"multiplicity\":\"gate\",\"payload_arity\":1," ++
+  "\"relation\":\"multiset\",\"tag_index\":1,\"tags\":{\"provide\":0,\"receive\":1}}]," ++
+  "\"protocol\":\"clean-bus\",\"version\":1}"
+#guard (Lean.toJson
+    (BusProtocol.ofModel (.logUp (F 5)) [(LegacyChannel (p := 5)).schema])).compress ==
+  "{\"balance\":\"logup\",\"channels\":[{\"arity\":1,\"channel\":\"legacy\"," ++
+  "\"multiplicity\":\"signed\",\"relation\":\"logup\"}],\"protocol\":\"clean-bus\",\"version\":1}"
+
+/-- A protocol is well-formed when every channel has the layout its model reads, decided by
+`decide`: the two supported pairings ... -/
+example : (BusProtocol.ofModel (.multiset (F 5)) [(OneChannel (F 5)).schema]).WellFormed := by
+  decide
+example : (BusProtocol.ofModel (.logUp (F 5)) [(LegacyChannel (p := 5)).schema]).WellFormed := by
+  decide
+
+/-- ... and neither mismatch, the same two the static tie `BalanceModel.Reads` rejects. -/
+example : ¬ (BusProtocol.ofModel (.logUp (F 5)) [(OneChannel (F 5)).schema]).WellFormed := by
+  decide
+example :
+    ¬ (BusProtocol.ofModel (.multiset (F 5)) [(LegacyChannel (p := 5)).schema]).WellFormed := by
+  decide
+
+/-- The schema's arity is the raw arity the interactions carry, and its layout is the one the
+multiset model exports, over any field. -/
+example : (OneChannel K).schema.arity = (OneChannel K).toRaw.arity := rfl
+example : (OneChannel K).schema.layout = BalanceModel.Protocol.layout (BalanceModel.multiset K) :=
+  rfl
+
+/-- The protocol of the ordered test ensemble `oneEnsemble`: one directed channel under the
+multiset model. -/
+def oneProtocol (F : Type) [FiniteField F] [DecidableEq F] : BusProtocol :=
+  BusProtocol.ofModel (.multiset F) [(OneChannel F).schema]
+
+example : (oneProtocol (F 2)).WellFormed := by decide
+end Protocol
 
 end BusBalanceEnsembleTests

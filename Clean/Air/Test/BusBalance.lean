@@ -124,11 +124,12 @@ def LegacyTwo : Channel (F 5) (fields 2) where
   name := "one"
   Guarantees _ _ := True
 
--- Serialization shape only: the raw JSON of a directed interaction is the legacy
+-- Serialization shape: the raw JSON of a directed interaction is the legacy
 -- channel/message/multiplicity object with the tag as one more message element. It does not
--- identify the directed interpretation: a legacy interaction with a two-element payload
--- serializes to the same bytes. The opt-in directed export protocol is roadmap Layer 5 work and
--- does not exist yet.
+-- by itself identify the directed interpretation: a legacy interaction with a two-element
+-- payload serializes to the same bytes. The interpretation is bound beside the interactions by
+-- the bus export protocol (`Clean/Air/BusProtocol.lean`), pinned in the Protocol section of
+-- `BusBalanceEnsemble.lean`; the interaction bytes below are unchanged by it (A19).
 #guard (Lean.toJson ((OneChannel (F 5)).pushed 3).toRaw).compress ==
   "{\"channel\":\"one\",\"message\":[{\"type\":\"const\",\"value\":3}," ++
   "{\"type\":\"const\",\"value\":0}],\"multiplicity\":{\"type\":\"const\",\"value\":1}}"
