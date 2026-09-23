@@ -132,6 +132,34 @@ lemma toRaw_name (channel : DirectedChannel F Message) : channel.toRaw.name = ch
 @[circuit_norm]
 lemma toRaw_arity (channel : DirectedChannel F Message) :
   channel.toRaw.arity = size Message + 1 := rfl
+
+/-- Equality of the erasures of two directed channels in a form `simp` can use: as for
+`Channel.toRaw_ext_iff`, `circuit_norm` discharges channel comparisons by reducing them to name
+mismatches, while equal concrete channels close by reflexivity. -/
+@[circuit_norm]
+lemma toRaw_ext_iff {Message2 : TypeMap} [ProvableType Message2]
+    (channel1 : DirectedChannel F Message) (channel2 : DirectedChannel F Message2) :
+    channel1.toRaw = channel2.toRaw ↔
+    channel1.name = channel2.name ∧ size Message + 1 = size Message2 + 1 ∧
+    ((fun (mult : F) (message : Vector F (size Message + 1)) data ↦
+        message.toArray.back? = some Direction.receive.tag → mult ≠ 0 →
+          channel1.Guarantees (fromElements message.pop) data) ≍
+      fun (mult : F) (message : Vector F (size Message2 + 1)) data ↦
+        message.toArray.back? = some Direction.receive.tag → mult ≠ 0 →
+          channel2.Guarantees (fromElements message.pop) data) ∧
+    ((fun (mult : F) (message : Vector F (size Message + 1)) data ↦
+        (mult = 0 ∨ mult = 1) ∧
+        (message.toArray.back? = some Direction.provide.tag ∨
+          message.toArray.back? = some Direction.receive.tag) ∧
+        (message.toArray.back? = some Direction.provide.tag → mult ≠ 0 →
+          channel1.Guarantees (fromElements message.pop) data)) ≍
+      fun (mult : F) (message : Vector F (size Message2 + 1)) data ↦
+        (mult = 0 ∨ mult = 1) ∧
+        (message.toArray.back? = some Direction.provide.tag ∨
+          message.toArray.back? = some Direction.receive.tag) ∧
+        (message.toArray.back? = some Direction.provide.tag → mult ≠ 0 →
+          channel2.Guarantees (fromElements message.pop) data)) := by
+  simp only [toRaw, RawChannel.mk.injEq]
 end DirectedChannel
 
 /-- A typed interaction with a directed channel: a direction, an activation gate, a message,

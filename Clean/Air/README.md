@@ -99,6 +99,14 @@ cases the soundness theorem's premise is "every channel is balanced under the mo
 holds of a deployed system only if the backend enforces that model's relation on that
 channel's interactions.
 
+A worked directed VM is `Clean/Air/Test/BusBalanceVm.lean`: a counter whose state channel
+carries reachability of the state, a successor lookup channel, and a verifier that fixes the
+final program counter `N`. Its ensemble theorem, over any field and without a characteristic
+bound, is that the output is the counter after `N` steps; over `F 2` the one-step run from `0`
+to `1` has an explicit witness (four interactions on the state channel, two on the successor
+channel) and the output `0` is rejected under the same statement, while the legacy relation
+admits no such run at all.
+
 ### The bus export protocol (`Clean/Air/BusProtocol.lean`)
 
 The JSON of an interaction (`Clean/Circuit/Json.lean`) is the same for both kinds: a channel
