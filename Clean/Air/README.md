@@ -105,7 +105,8 @@ final program counter `N`. Its ensemble theorem, over any field and without a ch
 bound, is that the output is the counter after `N` steps; over `F 2` the one-step run from `0`
 to `1` has an explicit witness (four interactions on the state channel, two on the successor
 channel) and the output `0` is rejected under the same statement, while the legacy relation
-admits no such run at all.
+admits no witness of the ensemble at all (its verifier alone puts two interactions on the
+state channel, one more than the legacy guard allows over `F 2`).
 
 ### The bus export protocol (`Clean/Air/BusProtocol.lean`)
 

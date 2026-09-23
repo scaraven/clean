@@ -17,13 +17,17 @@ verifier, and its spec is that the accumulator it receives is the counter after 
 `(N : F)`. Nothing else is assumed: the result is carried by the guarantees of the two
 channels through the ensemble proof.
 
-`N` is fixed as a field element, so the run the verifier accepts has taken a number of steps
-congruent to `N` modulo the characteristic; the accumulator is the same for all of them, and the
-statement holds over every field without a characteristic bound. Over `F 2` with `N = 1` this is
-the one-step computation from `0` to `1`: `counterEnsemble_one_step_over_F2` is its witness, one
-step, one successor row and the verifier, with four interactions on the state channel and two on
-the successor channel; `counterEnsemble_rejects_zero_over_F2` rejects the output `0` under the
-same statement; and the legacy relation rejects the witness's state channel outright.
+`N` is fixed as a field element, not as a number of steps: the theorem is about the output only,
+and it holds over every field without a characteristic bound. Over `F 2` with `N = 1` the
+one-step run from `0` to `1` is accepted (`counterEnsemble_one_step_over_F2`: one step, one
+successor row and the verifier, four interactions on the state channel and two on the successor
+channel), and so is the three-step run `0 → 1 → 0 → 1` with the same output
+(`counterEnsemble_three_steps_over_F2`), since a program counter read into `F 2` records only
+the parity of the step count; the output `0` is rejected under the same statement
+(`counterEnsemble_rejects_zero_over_F2`); and the legacy relation rejects every witness of the
+ensemble, whatever `N` (`legacy_rejects_every_run`). The accumulator of a counter equals its
+program counter on every reachable state; the example demonstrates the bus argument over a
+binary field, not an arithmetic one.
 
 The counter VM of `Clean/Air/Test/BusBalanceEnsemble.lean` has a free guarantee and exercises
 the builders; this file is the VM specification that section defers to.
@@ -49,7 +53,8 @@ def SuccChannel (F : Type) [FiniteField F] : DirectedChannel F fieldPair where
   | (x, y), _ => y = x + 1
 
 /-- The successor provider: one row per successor the machine consumes. Its content is the
-requirement of its provide; the row spec is trivial. -/
+requirement of its provide, so the channel is listed as one with requirements; the row spec is
+trivial. -/
 def succProvider (F : Type) [FiniteField F] : GeneralFormalCircuit F field unit where
   main x := (SuccChannel F).push (x, x + 1)
   Spec _ _ _ := True
@@ -282,13 +287,89 @@ theorem counterEnsemble_rejects_zero_over_F2 :
     ¬ (counterEnsemble (F 2) 1).ensemble.StatementWith (.multiset (F 2)) 0 :=
   fun h => absurd (counterEnsemble_output_one_over_F2 0 h) (by decide)
 
-/-- What the legacy relation makes of the same run: its four state-channel interactions exceed
-the no-wrap guard `length < ringChar (F 2) = 2`, so no LogUp-based statement holds of this
-witness. -/
-theorem legacy_rejects_counterWitness_state :
+/-- The three-step run `0 → 1 → 0 → 1` over `F 2`: rows `(1, 0, 0, 1)`, `(1, 1, 1, 0)`,
+`(1, 0, 0, 1)`. -/
+def stepTable3 : Table (F 2) where
+  component := ⟨ counterStep (F 2) ⟩
+  width := 4
+  table := [#[1, 0, 0, 1], #[1, 1, 1, 0], #[1, 0, 0, 1]]
+  data := fun _ _ => #[]
+  uniform_width := by simp
+
+/-- Its three successor rows: the successors of `0`, `1` and `0`. -/
+def succTable3 : Table (F 2) where
+  component := ⟨ succProvider (F 2) ⟩
+  width := 1
+  table := [#[0], #[1], #[0]]
+  data := fun _ _ => #[]
+  uniform_width := by simp
+
+/-- The witness of the three-step run, with the same output `1`. -/
+def counterWitness3 : EnsembleWitness (counterEnsemble (F 2) 1).ensemble where
+  tables := [stepTable3, succTable3]
+  data := fun _ _ => #[]
+  publicInput := 1
+  same_length := rfl
+  same_circuits := by
+    intro i hi
+    match i with
+    | 0 => rfl
+    | 1 => rfl
+  same_data := by
+    intro table ht
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at ht
+    rcases ht with rfl | rfl <;> rfl
+
+/-- The statement with `N = 1` also accepts the three-step run, with the same output: `N` fixes
+the final program counter as a field element, which over `F 2` is the parity of the number of
+steps. Its eight state-channel and six successor-channel interactions are balanced. -/
+theorem counterEnsemble_three_steps_over_F2 :
+    (counterEnsemble (F 2) 1).ensemble.StatementWith (.multiset (F 2)) 1 := by
+  refine ⟨counterWitness3, rfl, ?_, ?_⟩
+  · rw [EnsembleWitness.Constraints, EnsembleWitness.forall_mem_allTables_iff]
+    refine ⟨ ?_, ?_ ⟩
+    · rw [← EnsembleWitness.verifierConstraints_iff_verifierTable_constraints]
+      simp [Ensemble.VerifierConstraints, circuit_norm, counterEnsemble, counterVm,
+        counterVerifier]
+    · simp [counterWitness3, stepTable3, succTable3, Table.Constraints, Component.constraints_eq,
+        Component.lookups_eq, circuit_norm, counterStep, succProvider, Table.environment,
+        Environment.fromArray]
+  · have hv : (counterEnsemble (F 2) 1).ensemble.verifier = counterVerifier (F 2) 1 := rfl
+    intro channel h_channel
+    simp only [counterEnsemble, counterVm, circuit_norm, List.mem_cons, List.not_mem_nil,
+      or_false] at h_channel
+    rw [BalanceModel.multiset_balanced_iff, EnsembleWitness.interactionsWith_allTablesWitness]
+    simp only [EnsembleWitness.interactionsWith, EnsembleWitness.allTables, List.flatMap_cons,
+      Table.interactionsWith, EnsembleWitness.verifierTable_flatMap,
+      EnsembleWitness.verifierTable_component, EnsembleWitness.verifierTable_environment,
+      Operations.interactionValuesWith_eq_map, Ensemble.verifierTable_interactionsWith,
+      Ensemble.verifierOperations, hv]
+    simp only [counterWitness3, stepTable3, succTable3, List.flatMap_cons, List.flatMap_nil,
+      List.append_nil, Component.interactionsWith_eq]
+    rcases h_channel with rfl | rfl <;>
+      simp [circuit_norm, counterStep, succProvider, counterVerifier, StateChannel, SuccChannel,
+        DirectedChannel.eval_toRaw, Table.environment, Environment.fromArray,
+        Environment.fromInput, Component.rowOperations, activePayloads] <;>
+      decide
+
+/-- What the legacy relation makes of this ensemble over `F 2`: no witness of it, for any `N`,
+is LogUp-balanced on the state channel, since the verifier alone puts two interactions there
+and the no-wrap guard `length < ringChar (F 2) = 2` admits at most one
+(`legacy_length_le_one_over_F2`). Generalised from the one-step witness in review. -/
+theorem legacy_rejects_every_run (N : ℕ)
+    (witness : EnsembleWitness (counterEnsemble (F 2) N).ensemble) :
     ¬ BalancedInteractions
-      (counterWitness.allTablesWitness.interactionsWith (StateChannel (F 2)).toRaw) :=
-  fun h => absurd (legacy_length_le_one_over_F2 _ h)
-    (by rw [counterWitness_state_interactions]; simp)
+      (witness.allTablesWitness.interactionsWith (StateChannel (F 2)).toRaw) := by
+  intro h
+  have hlen := legacy_length_le_one_over_F2 _ h
+  have hv : (counterEnsemble (F 2) N).ensemble.verifier = counterVerifier (F 2) N := rfl
+  rw [EnsembleWitness.interactionsWith_allTablesWitness] at hlen
+  simp only [EnsembleWitness.interactionsWith, EnsembleWitness.allTables, List.flatMap_cons,
+    Table.interactionsWith, EnsembleWitness.verifierTable_flatMap,
+    EnsembleWitness.verifierTable_component, EnsembleWitness.verifierTable_environment,
+    Operations.interactionValuesWith_eq_map, Ensemble.verifierTable_interactionsWith,
+    Ensemble.verifierOperations, hv, List.length_append, List.length_map] at hlen
+  simp [circuit_norm, counterVerifier, StateChannel] at hlen
+  omega
 
 end BusBalanceVmTests
