@@ -3,20 +3,14 @@ import Clean.Air.BusProtocol
 import Clean.Air.Test.BusBalance
 
 /-!
-# Bus balance: the models through ensemble soundness
+# Bus balance tests: ensemble soundness
 
-Evidence for roadmap Layer 3, which connects the balance models to ensemble soundness
-through the model-aware builders: the typed channel gate (a channel of the kind the model does
-not read is a type error at the line that adds it); an ordered ensemble on a directed channel
-built and closed under the multiset model over any field, with a nonempty witness of its
-statement over `F 2` (the legacy relation admits at most one interaction there); a directed
-VM built through `addVm` and `toFormal`; and the necessity fixtures of the hypotheses of the
-directed VM theorem and of the count adapter behind it.
-
-As in `Clean/Air/Test/BusBalance.lean`, an `example` whose type is `Prop` or a record is a
-typechecking test only; every semantic claim is a proved statement or a `#guard`. The channel
-fixtures `OneChannel`, `NeverDirected`, `LegacyChannel` and the empty prover data `noData` are
-those of `BusBalance.lean`.
+Tests of the model-aware ensemble builders: a channel of the wrong kind for the model is a type
+error; an ordered ensemble on a directed channel is sound under the multiset model over any
+field, with a witness over `F 2`; a directed VM is built through `addVm` and `toFormal`;
+counterexamples show that the hypotheses of the directed VM theorem are needed; and the bus
+export protocol is pinned by `#guard`. The test channels come from
+`Clean/Air/Test/BusBalance.lean`.
 -/
 
 namespace BusBalanceEnsembleTests
@@ -28,7 +22,7 @@ def AnyDirected (F : Type) [FiniteField F] : DirectedChannel F field where
   name := "any-directed"
   Guarantees _ _ := True
 
-/-! ## The typed gate: a model accepts only the channel kind it reads -/
+/-! ## A model accepts only the channel kind it reads -/
 section Gate
 variable {K : Type} [FiniteField K] [DecidableEq K]
 
@@ -50,12 +44,11 @@ example {p : ℕ} [Fact p.Prime] : SoundEnsembleWith (F p) (.logUp (F p)) unit :
 #check_failure (SoundEnsembleWith.empty (F 5) (.multiset (F 5)) unit
   |>.addFinishedChannel (LegacyChannel (p := 5)))
 
-/-- The escape hatch takes a raw channel with a consistency instance ... -/
+/-- `addFinishedRawChannel` takes a raw channel with a consistency instance ... -/
 example : SoundEnsembleWith K (.multiset K) unit :=
   SoundEnsembleWith.empty K (.multiset K) unit |>.addFinishedRawChannel (OneChannel K).toRaw
 
--- ... which instance search declares for neither mismatch, so the raw entry rejects them too
--- unless an instance is written by hand.
+-- ... which instance search finds for neither mismatched pairing.
 #guard_msgs (drop info) in
 #check_failure (SoundEnsembleWith.empty (F 5) (.logUp (F 5)) unit
   |>.addFinishedRawChannel (OneChannel (F 5)).toRaw)
@@ -70,7 +63,7 @@ example :
   simp only [circuit_norm]
 end Gate
 
-/-! ## An ordered ensemble on a directed channel, closed under the multiset model (A14, A15) -/
+/-! ## An ordered ensemble on a directed channel -/
 section Ordered
 
 /-- Provides the message `1`, which is what `OneChannel` guarantees. -/
@@ -94,9 +87,8 @@ def oneConsumer (F : Type) [FiniteField F] : GeneralFormalCircuit F field unit w
     circuit_proof_start [OneChannel]
     exact h_assumptions
 
-/-- The provider, then the channel finished, then the consumer: the consumer may assume what
-the provider proved. The channel enters through the typed gate, and `markFinished` finds it by
-`circuit_norm`. -/
+/-- The provider, then the channel finished, then the consumer, which may assume what the
+provider proved. -/
 def oneEnsemble (F : Type) [FiniteField F] [DecidableEq F] :
     SoundEnsembleWith F (.multiset F) unit :=
   SoundEnsembleWith.empty F (.multiset F) unit
@@ -107,10 +99,8 @@ def oneEnsemble (F : Type) [FiniteField F] [DecidableEq F] :
     |>.addTable ⟨ oneConsumer F ⟩
       (by simp [circuit_norm, oneConsumer]) (by simp [circuit_norm, oneConsumer])
 
-/-- A15, the full chain: over any field, every witness of the ensemble that satisfies its
-constraints and is balanced under the multiset model satisfies the spec of every table, so
-every consumer row carries `1`. The multiset balance feeds the consistency of the channel,
-which transports the provider's requirement to the consumer's guarantee. -/
+/-- Over any field, every witness of the ensemble that satisfies its constraints and is balanced
+under the multiset model satisfies the spec of every table, so every consumer row carries `1`. -/
 theorem oneEnsemble_tableSoundness (F : Type) [FiniteField F] [DecidableEq F] :
     (oneEnsemble F).TableSoundnessWith (.multiset F) :=
   Ensemble.tableSoundnessWith_of_soundChannelsWith
@@ -179,10 +169,8 @@ theorem oneWitness_interactions :
   simp [circuit_norm, oneConsumer, oneProvider, DirectedChannel.eval_toRaw, Table.environment,
     Environment.fromArray]
 
-/-- A9 at ensemble level, in miniature: over `F 2` the statement of the ordered ensemble under
-the multiset model is satisfied by `oneWitness`, whose two interactions on the channel are
-more than the legacy relation admits there (`legacy_length_le_one_over_F2` in
-`BusBalance.lean`). -/
+/-- Over `F 2`, the statement of `oneEnsemble` under the multiset model is satisfied by
+`oneWitness`, whose two interactions on the channel are more than the legacy relation admits. -/
 theorem oneEnsemble_statement_over_F2 :
     (oneEnsemble (F 2)).ensemble.StatementWith (.multiset (F 2)) () := by
   refine ⟨oneWitness, rfl, ?_, ?_⟩
@@ -197,11 +185,12 @@ theorem oneEnsemble_statement_over_F2 :
     simp [activePayloads, circuit_norm]
 end Ordered
 
-/-! ## A directed VM through `addVm` and `toFormal` (A14; A9 in miniature) -/
+/-! ## A directed VM through `addVm` and `toFormal` -/
 section Vm
 
-/-- A counter state channel with a free guarantee: this section exercises the VM builders,
-not a VM specification (roadmap Layer 4). -/
+/-- A counter state channel with a free guarantee: this section tests the VM builders, not a VM
+specification. A VM with a semantic state guarantee is worked out in
+`Clean/Examples/FibonacciWithDirectedChannels.lean`. -/
 def CounterChannel (F : Type) [FiniteField F] : DirectedChannel F field where
   name := "counter"
   Guarantees _ _ := True
@@ -256,8 +245,7 @@ def counterVm (F : Type) [FiniteField F] [DecidableEq F] : DirectedVmTables F fi
   verifier_channel := by simp [circuit_norm, counterVerifier]
   verifier_requirements env := by simp [circuit_norm, counterVerifier, CounterChannel]
 
-/-- A14: the directed VM survives `addVm` and `toFormal` over any field, with the multiset
-model fixed from the empty ensemble through the bundle; nothing falls back to LogUp. -/
+/-- The directed VM through `addVm` and `toFormal` under the multiset model, over any field. -/
 def counterEnsemble (F : Type) [FiniteField F] [DecidableEq F] :
     FormalEnsembleWith F (.multiset F) field :=
   SoundEnsembleWith.empty F (.multiset F) field
@@ -314,9 +302,8 @@ theorem counterWitness_interactions :
     Environment.fromArray, Environment.fromInput, Component.rowOperations]
   rfl
 
-/-- A9 for the VM path, in miniature: the statement of the counter ensemble under the multiset
-model is satisfied over `F 2` by a nonempty witness, one step from `0` to `1` with the final
-state `1` as public input and four interactions on the state channel (added in review). -/
+/-- Over `F 2`, the statement of `counterEnsemble` under the multiset model is satisfied by a
+nonempty witness: one step from `0` to `1`, with the final state `1` as public input. -/
 theorem counterEnsemble_statement_over_F2 :
     (counterEnsemble (F 2)).ensemble.StatementWith (.multiset (F 2)) 1 := by
   refine ⟨counterWitness, rfl, ?_, ?_⟩
@@ -335,7 +322,7 @@ theorem counterEnsemble_statement_over_F2 :
     decide
 end Vm
 
-/-! ## Necessity of the hypotheses of the directed VM theorem (A7, A8 for Layer 3) -/
+/-! ## Necessity of the hypotheses of the directed VM theorem -/
 section Necessity
 variable {K : Type} [FiniteField K] [DecidableEq K]
 
@@ -350,13 +337,9 @@ def recOff : Interaction (F 2) := (OneChannel (F 2)).emittedValue .receive 0 0 t
 def badPulls : List (Interaction (F 2)) := [prov1 0, rec1 0, rec1 1]
 def badPushes : List (Interaction (F 2)) := [prov1 1, off1, off1]
 
-/-- `pulls_receive` is load-bearing in the directed VM theorem: with a provide among the pulls,
-the lists are count-balanced, of equal length, on the channel, every push is a provide, every
-row satisfies `G pulls[i] → R pushes[i]` (the provide among the pulls assumes nothing, so it
-forces the requirement of the provide of `1` opposite it, which holds), the second push is
-disabled and owes nothing, yet the second pull assumed `0 = 1`. The provide among the pulls
-supplied that receive without any push owing its guarantee. Each fixture of this section
-states the hypotheses it keeps, so that it is a counterexample to dropping exactly one. -/
+/-- `pulls_receive` is necessary in the directed VM theorem: with a provide among the pulls,
+every other hypothesis holds, yet the second pull assumed `0 = 1` and no push owes it. Each
+theorem of this section drops exactly one hypothesis and states the others. -/
 theorem pull_role_necessary :
     CountBalanced Interaction.directedEvent (badPulls ++ badPushes) ∧
     badPulls.length = 3 ∧ badPushes.length = 3 ∧
@@ -383,7 +366,7 @@ theorem pull_role_necessary :
   · simp [badPushes, off1, OneChannel, DirectedChannel.emittedValue_requirements_iff]
   · simp [badPulls, rec1, OneChannel, DirectedChannel.emittedValue_guarantees_iff]
 
-/-- `balance` is load-bearing: an unbalanced pair, a receive of `0` that assumes against a
+/-- `balance` is necessary: an unbalanced pair, a receive of `0` that assumes against a
 disabled provide, both on the channel and in their roles, satisfies the row implication
 vacuously and the disabled provide owes nothing, yet the receive assumed `0 = 1`. -/
 theorem balance_necessary :
@@ -408,7 +391,7 @@ theorem balance_necessary :
 /-- An active provide of `0` on the channel whose guarantee is free. -/
 def anyProv : Interaction (F 2) := (AnyDirected (F 2)).emittedValue .provide 1 0 false
 
-/-- `pushes_channel` is load-bearing: the directed reading is channel-blind, so a provide of
+/-- `pushes_channel` is necessary: the directed reading is channel-blind, so a provide of
 `0` on the channel whose guarantee is free balances a receive of `0` on `OneChannel`, in their
 roles, with the pull on the channel; that provide owes nothing, the row implication holds, and
 the receive assumed `0 = 1`. -/
@@ -431,7 +414,7 @@ theorem pushes_channel_necessary :
 `False`. -/
 def neverRec : Interaction (F 2) := (NeverDirected (F 2)).emittedValue .receive 1 1 true
 
-/-- `pulls_channel` is load-bearing: a receive of `1` on the channel whose guarantee is `False`
+/-- `pulls_channel` is necessary: a receive of `1` on the channel whose guarantee is `False`
 balances a provide of `1` on `OneChannel`, in their roles, with the push on the channel; that
 provide meets its requirement, the row implication holds, and the receive assumed `False`. -/
 theorem pulls_channel_necessary :
@@ -479,8 +462,7 @@ theorem count_eq_pulls_receive_necessary :
 /-- ... and without `pushes_provide`, an active receive among the pushes is counted on the push
 side under its payload key: two disabled receives against a provide and a receive of `0` are
 count-balanced, of equal length, and all pulls are receives, yet the key `[0]` counts `0` on
-the pull side and `2` on the push side. (The first version of this fixture put two disabled
-provides among the pulls, which drops `pulls_receive` as well; corrected in review.) -/
+the pull side and `2` on the push side. -/
 theorem count_eq_pushes_provide_necessary :
     CountBalanced Interaction.directedEvent ([recOff, recOff] ++ [prov1 0, rec1 0]) ∧
     ([recOff, recOff] : List (Interaction (F 2))).length = [prov1 0, rec1 0].length ∧
@@ -496,13 +478,12 @@ theorem count_eq_pushes_provide_necessary :
   · simp [prov1, rec1, recOff, circuit_norm]
 end Necessity
 
-/-! ## The bus export protocol (A19) -/
+/-! ## The bus export protocol -/
 section Protocol
 variable {K : Type} [FiniteField K] [DecidableEq K]
 
--- A19: the schema of a directed channel identifies the interpretation the interaction bytes
--- do not carry: the relation, the tag index, the two tags, the gate and the malformed-tag
--- rule; its arity is the raw arity the interactions carry.
+-- The schema of a directed channel records what the interaction bytes do not: the relation,
+-- the tag index, the two tags, the gate and the malformed-tag rule.
 #guard (Lean.toJson (OneChannel (F 5)).schema).compress ==
   "{\"arity\":2,\"channel\":\"one\",\"malformed_tag\":\"reject\",\"multiplicity\":\"gate\"," ++
   "\"payload_arity\":1,\"relation\":\"multiset\",\"tag_index\":1," ++
@@ -530,7 +511,7 @@ example : (BusProtocol.ofModel (.multiset (F 5)) [(OneChannel (F 5)).schema]).We
 example : (BusProtocol.ofModel (.logUp (F 5)) [(LegacyChannel (p := 5)).schema]).WellFormed := by
   decide
 
-/-- ... and neither mismatch, the same two the static tie `BalanceModel.Reads` rejects. -/
+/-- ... and neither mismatched pairing, as with `BalanceModel.Reads`. -/
 example : ¬ (BusProtocol.ofModel (.logUp (F 5)) [(OneChannel (F 5)).schema]).WellFormed := by
   decide
 example :

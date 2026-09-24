@@ -4,59 +4,18 @@ import Clean.Circuit.Json
 /-!
 # The bus export protocol, version 1
 
-What a backend has to know, per channel, to enforce the balance relation that the Lean
-soundness proofs assume. The proofs of `Clean.Air.OrderedChannelWith` and `Clean.Air.VmWith`
-conclude soundness from `Ensemble.StatementWith model`, "every channel's interactions are
-`model.Balanced`". That premise is only worth anything if the verifier actually enforces the
-model's relation on the interactions it receives. The exported interactions do not say which
-relation that is: a directed interaction serializes to the legacy channel/message/multiplicity
-object with the direction tag as one more message element, byte for byte the JSON of a legacy
-interaction with a one-element-longer payload (pinned in `Clean/Air/Test/BusBalance.lean`).
-Over a binary field the two readings disagree on real traces: two provides of the same payload
-sum to zero under the LogUp relation and are rejected by the multiset relation.
+The per-channel information a backend needs to enforce the balance relation assumed by the
+soundness proofs of `Clean.Air.OrderedChannelWith` and `Clean.Air.VmWith`. The exported
+interactions do not identify it: a directed interaction serializes as a legacy interaction with
+one more message element, and over a binary field the two relations disagree (two provides of
+one payload sum to zero under LogUp but are rejected by the multiset relation).
 
-The protocol therefore binds the interpretation *beside* the interactions, not inside them, so
-that the bytes of every existing interaction are unchanged (roadmap decision on the export,
-2026-09-23):
-
-* `ChannelSchema`: for one channel, its name, its raw arity and its `ChannelLayout`. A `signed`
-  channel is a legacy `Channel`: the message is the payload, the multiplicity a signed weight,
-  and the verifier enforces the field-sum relation with its no-wrap guard (`BalanceModel.logUp`).
-  A `directed` channel is a `DirectedChannel`: the message is the payload followed by the
-  direction tag at index `arity - 1` (`0` provide, `1` receive), the multiplicity is a `0`/`1`
-  gate, and the verifier enforces the natural-number multiset relation on the payloads with the
-  tag removed (`BalanceModel.multiset`); an interaction whose tag is neither value is rejected.
-* `BusProtocol`: the protocol version, the balance model of the ensemble (by its layout, since
-  an ensemble is balanced under one model), and the schemas of its channels. `WellFormed` says
-  every channel has the layout the model reads; it is decidable, so an export is checked by
-  `decide`.
-
-The schema is produced from the typed channels (`Channel.schema`, `DirectedChannel.schema`),
-which is where the encoding is known; after erasure to `RawChannel` nothing records it. The
-model's layout comes from `BalanceModel.Protocol`, declared for the two models like
-`BalanceModel.Reads`, so that a model and the channel kind it reads export the same layout
-(`Channel.schema_layout_logUp`, `DirectedChannel.schema_layout_multiset`).
-
-## What the clauses of the protocol mean in Lean
-
-Each clause of the directed layout is a fact about the encoding of `Clean.Circuit.DirectedChannel`
-and the reading `Interaction.directedEvent` of `Clean.Air.BalanceModel`, stated below:
-
-* tag position: `Interaction.directedEvent_direction_eq_provide_iff_tagIndex`, the reading
-  looks at index `arity - 1`;
-* tag removal: `Interaction.directedEvent_payload_size`, the payload the relation compares
-  has `arity - 1` elements (`directedEvent_payload` in `BalanceModel.lean` says it is the
-  message with its last element removed);
-* gate handling: `DirectedChannel.gate_of_requirements`, a sound row's gate is `0` or `1`;
-* malformed tags: `DirectedChannel.tag_of_requirements`, a sound row's tag is one of the two.
-
-The last two are the local contract's obligations, so a backend that rejects a gate outside
-`{0, 1}` or a tag outside `{0, 1}` rejects only traces that no sound row produces.
-
-What the protocol does not do: it does not change `AbstractInteraction`'s JSON, it does not add
-a field to any public record, and it does not by itself make a backend enforce anything. It is
-the document a backend implements and the object an ensemble export includes next to its
-operations. The integration with a consumer (leanerVM) is separate work.
+The protocol records the interpretation beside the interaction bytes: a
+`ChannelSchema` per channel (name, raw arity and `ChannelLayout`, from `Channel.schema` or
+`DirectedChannel.schema`) and a `BusProtocol` per ensemble (the layout of its balance model and
+its channel schemas). The last section proves each clause of the directed layout as a fact about
+the encoding; the gate and tag rules are local-contract obligations, so a backend enforcing them
+rejects only traces that no sound row produces.
 -/
 
 open Lean

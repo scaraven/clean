@@ -3,21 +3,13 @@ import Clean.Circuit.Json
 import Mathlib.Tactic.NormNum.Prime
 
 /-!
-# Bus balance acceptance tests
+# Bus balance tests
 
-Evidence for the acceptance items of the bus-balance roadmap that are within reach of the
-kernel, the balance models and the local contract (A1–A8, A11–A15, A17–A18), the legacy
-compatibility fixtures, and the Layer 0 prototype: one typed message, a provider, a receive
-with an assumption, a receive without an assumption, a gated event, and one ensemble whose
-statement takes an explicit balance model. The Consistency section shows what a balance model
-does on the channel encoding it reads, what it does on the other one, and which pairings the
-consistency obligation and the static tie `BalanceModel.Reads` admit.
-
-Two kinds of fixture are kept apart. An `example` whose type is `Prop` only checks that the
-new API elaborates with explicit parameters; it proves nothing about satisfiability. Every
-semantic claim in this file (what the legacy relation admits over `F 2`, what the local
-contract rejects, what a model accepts, what a nested circuit collects) is a proved statement
-or a `#guard`.
+Tests for the event kernel of `Clean.Air.Balance`, the balance models and the directed channel
+contract: legacy channels and their JSON, the directed tag and local contract, counterexamples
+showing that the kernel hypotheses are needed, matching and mismatched model/channel pairings,
+the directed reading of malformed tags, and a small directed circuit and ensemble. An `example`
+whose type is `Prop` only checks elaboration; every semantic claim is a theorem or a `#guard`.
 -/
 
 namespace BusBalanceTests
@@ -25,7 +17,7 @@ open Air.Flat
 
 instance : Fact (Nat.Prime 5) := ⟨by norm_num⟩
 
-/-! ## Legacy compatibility fixtures (A11, A13) -/
+/-! ## Legacy channels -/
 section Legacy
 variable {p : ℕ} [Fact p.Prime]
 
@@ -39,32 +31,29 @@ def NeverChannel : Channel (F p) field where
   name := "never"
   Guarantees _ _ := False
 
-/-- A11: legacy `emit (-1)` neither assumes nor owes the guarantee, even a `False` one. -/
+/-- Legacy `emit (-1)` neither assumes nor owes the guarantee, even a `False` one. -/
 example (env : Environment (F p)) (msg : Expression (F p)) :
     ((NeverChannel (p := p)).emitted (-1) msg).Guarantees env ∧
     ((NeverChannel (p := p)).emitted (-1) msg).Requirements env := by
   simp [circuit_norm]
 
-/-- A13: the two-premise requirement proof shape used downstream still typechecks. -/
+/-- A legacy requirement is proved from the guarantee under two premises. -/
 example (env : Environment (F p)) (m msg : Expression (F p))
     (h : (LegacyChannel (p := p)).Guarantees (eval env msg) env.data) :
     ((LegacyChannel (p := p)).emitted m msg).Requirements env :=
   fun _ _ => h
 
-/-- A13: `exists_push_of_pull` keeps its name and statement. -/
+/-- The statement of `exists_push_of_pull`. -/
 example {F : Type} [FiniteField F] [DecidableEq F] (interactions : List (Interaction F))
     (balance : BalancedInteractions interactions) :
     ∀ a ∈ interactions, a.mult = -1 →
       ∃ b ∈ interactions, b.msg = a.msg ∧ b.mult ≠ 0 ∧ b.mult ≠ -1 :=
   exists_push_of_pull interactions balance
 
-/-- A13: `one_ne_neg_one` keeps its name and statement. -/
+/-- The statement of `one_ne_neg_one`. -/
 example {F : Type} [FiniteField F] [Fact (ringChar F ≠ 2)] : (1 : F) ≠ -1 := one_ne_neg_one
 
-/-- A13, amended 2026-09-18: the legacy VM theorem keeps its name and binders, minus the
-characteristic assumption, which was provably redundant (in characteristic `2` the no-wrap
-guard forces an empty cycle). Callers that had the instance in scope still elaborate; this
-example has none in scope. -/
+/-- The legacy VM theorem needs no characteristic assumption. -/
 example {F : Type} [FiniteField F] [DecidableEq F]
     (channel : RawChannel F) [channel.Normal]
     (pulls pushes : List (Interaction F))
@@ -78,21 +67,19 @@ example {F : Type} [FiniteField F] [DecidableEq F]
   guarantees_of_requirements_of_requirements_of_guarantees channel pulls pushes balance data n
     len_pulls len_pushes pulls_channel pushes_channel pulls_mult pushes_mult
 
--- A13: the JSON of a legacy interaction is unchanged: channel, multiplicity, message, no tag.
+-- The JSON of a legacy interaction: channel, multiplicity and message, with no tag.
 #guard (Lean.toJson ((LegacyChannel (p := 5)).pushed 3).toRaw).compress ==
   "{\"channel\":\"legacy\",\"message\":[{\"type\":\"const\",\"value\":3}]," ++
   "\"multiplicity\":{\"type\":\"const\",\"value\":1}}"
 
-/-- What the legacy relation excludes over `F 2`: more than one interaction on a channel,
-since its no-wrap guard is `length < ringChar F = 2`. A matching provide/receive pair is
-already too many. It says nothing about a channel without interactions; see
-`legacyProto_satisfiable`. -/
+/-- Over `F 2`, the no-wrap guard of `BalancedInteractions` allows at most one interaction on a
+channel, so even a matching provide/receive pair is rejected. -/
 theorem legacy_length_le_one_over_F2 (l : List (Interaction (F 2))) :
     BalancedInteractions l → l.length ≤ 1 :=
   length_le_one_of_balancedInteractions_of_ringChar_eq_two (ZMod.ringChar_zmod_n 2)
 end Legacy
 
-/-! ## The directed tag representation and contract (A1, A12) -/
+/-! ## Directed tags and local contract -/
 section Directed
 variable {K : Type} [FiniteField K] [DecidableEq K]
 
@@ -106,7 +93,7 @@ def NeverDirected (F : Type) [FiniteField F] : DirectedChannel F field where
   name := "never-directed"
   Guarantees _ _ := False
 
-/-- A1: the sign carries no direction over `F 2`; the tag does, over every field. -/
+/-- The sign carries no direction over `F 2`; the tag does, over every field. -/
 example : (-1 : F 2) = 1 := by decide
 example : (Direction.provide.tag : F 2) ≠ Direction.receive.tag := by decide
 example : (Direction.provide.tag : K) ≠ Direction.receive.tag := by simp [circuit_norm]
@@ -124,26 +111,23 @@ def LegacyTwo : Channel (F 5) (fields 2) where
   name := "one"
   Guarantees _ _ := True
 
--- Serialization shape: the raw JSON of a directed interaction is the legacy
--- channel/message/multiplicity object with the tag as one more message element. It does not
--- by itself identify the directed interpretation: a legacy interaction with a two-element
--- payload serializes to the same bytes. The interpretation is bound beside the interactions by
--- the bus export protocol (`Clean/Air/BusProtocol.lean`), pinned in the Protocol section of
--- `BusBalanceEnsemble.lean`; the interaction bytes below are unchanged by it (A19).
+-- A directed interaction serializes as a legacy interaction with the tag as one more message
+-- element, so it has the same JSON as a legacy interaction with a two-element payload. The
+-- interpretation is recorded separately by the bus export protocol (`Clean/Air/BusProtocol.lean`).
 #guard (Lean.toJson ((OneChannel (F 5)).pushed 3).toRaw).compress ==
   "{\"channel\":\"one\",\"message\":[{\"type\":\"const\",\"value\":3}," ++
   "{\"type\":\"const\",\"value\":0}],\"multiplicity\":{\"type\":\"const\",\"value\":1}}"
 #guard (Lean.toJson ((OneChannel (F 5)).pushed 0).toRaw).compress ==
   (Lean.toJson (LegacyTwo.pushed #v[0, 0]).toRaw).compress
 
-/-- A12: an active provider owes the guarantee, and every provider owes a boolean gate. -/
+/-- An active provider owes the guarantee, and every provider owes a boolean gate. -/
 example (env : Environment K) (enabled x : Expression K) :
     ((OneChannel K).pushedIf enabled x).Requirements env ↔
       (Expression.eval env enabled = 0 ∨ Expression.eval env enabled = 1) ∧
       (Expression.eval env enabled ≠ 0 → (OneChannel K).Guarantees (eval env x) env.data) := by
   simp [circuit_norm]
 
-/-- A12: an active receiver may assume the guarantee and owes only the gate. -/
+/-- An active receiver may assume the guarantee and owes only the gate. -/
 example (env : Environment K) (enabled x : Expression K) :
     (((OneChannel K).pulledIf enabled x).Guarantees env ↔
       (Expression.eval env enabled ≠ 0 → (OneChannel K).Guarantees (eval env x) env.data)) ∧
@@ -151,22 +135,22 @@ example (env : Environment K) (enabled x : Expression K) :
       (Expression.eval env enabled = 0 ∨ Expression.eval env enabled = 1)) := by
   simp [circuit_norm]
 
-/-- A12: a receiver that declines the guarantee is granted nothing and owes only the gate,
-even on a channel whose guarantee is `False`. -/
+/-- A receiver that declines the guarantee is granted nothing and owes only the gate, even on a
+channel whose guarantee is `False`. -/
 example (env : Environment K) (enabled x : Expression K) :
     ((NeverDirected K).emitted .receive enabled x).Guarantees env ∧
     (((NeverDirected K).emitted .receive enabled x).Requirements env ↔
       (Expression.eval env enabled = 0 ∨ Expression.eval env enabled = 1)) := by
   simp [circuit_norm, NeverDirected]
 
-/-- A12: a disabled event is granted nothing and owes nothing. -/
+/-- A disabled event is granted nothing and owes nothing. -/
 example (env : Environment K) (i : DirectedInteraction (NeverDirected K))
     (h : Expression.eval env i.enabled = 0) : i.Guarantees env ∧ i.Requirements env :=
   ⟨DirectedChannel.guarantees_of_enabled_eq_zero i h,
     DirectedChannel.requirements_of_enabled_eq_zero i h⟩
 
-/-- A4/A5 on the directed path: a receive of weight `2` violates the local contract,
-so no balance argument ever sees a non-unit event. -/
+/-- On a directed channel, a receive of weight `2` violates the local contract, so no balance
+argument sees a non-unit event. -/
 example (data : ProverData (F 5)) :
     ¬ ((OneChannel (F 5)).emittedValue .receive 2 1 true).Requirements data := by
   rw [DirectedChannel.emittedValue_requirements_iff]
@@ -175,7 +159,7 @@ example (data : ProverData (F 5)) :
   decide
 end Directed
 
-/-! ## Necessity of the kernel hypotheses (A2–A8) -/
+/-! ## Necessity of the kernel hypotheses -/
 section Necessity
 
 def noData (F : Type) : ProverData F := fun _ _ => #[]
@@ -187,8 +171,8 @@ def anyChannel (F : Type) [FiniteField F] : RawChannel F :=
 def pull1 : Interaction (F 2) := ⟨anyChannel (F 2), -1, #[0], rfl, true⟩
 def push1 : Interaction (F 2) := ⟨anyChannel (F 2), 1, #[0], rfl, false⟩
 
-/-- A2: field-sum balance without the no-wrap guard admits two unsupported unit receives
-over `F 2`. -/
+/-- Field-sum balance without the no-wrap guard admits two unsupported unit receives over
+`F 2`. -/
 theorem logUp_guard_necessary :
     (∀ msg, balanceOf [pull1, pull1] msg = 0) ∧
     ¬ PullsSupported Interaction.legacyEvent [pull1, pull1] := by
@@ -205,8 +189,7 @@ theorem logUp_guard_necessary :
     subst hj
     exact absurd hdir (by decide)
 
-/-- Today's guard excludes every pair over `F 2`, matched or not: an instance of
-`legacy_length_le_one_over_F2`. -/
+/-- The no-wrap guard excludes every pair over `F 2`, matched or not. -/
 theorem logUp_guard_excludes_pairs : ¬ BalancedInteractions [pull1, push1] :=
   fun h => absurd (legacy_length_le_one_over_F2 _ h) (by simp)
 
@@ -215,10 +198,8 @@ def push2 : Interaction (F 5) := ⟨anyChannel (F 5), 2, #[0], rfl, false⟩
 def pull5 : Interaction (F 5) := ⟨anyChannel (F 5), -1, #[0], rfl, true⟩
 def pullW2 : Interaction (F 5) := ⟨anyChannel (F 5), -2, #[0], rfl, true⟩
 
-/-- A4: on the legacy path, a signed receive of weight `2` is not a receive at all. Over `F 5`
-the multiplicity `-2` is neither `1` nor `-1`, it balances a weight-2 provider, and the sign
-reading makes it a provider (which owes the requirement). Non-unit receive weights are
-therefore not representable as receives; the directed path rejects them locally instead. -/
+/-- On a legacy channel, a receive of weight `2` is read as a provider: over `F 5`, `-2` is
+neither `1` nor `-1`, and it balances a weight-2 provider. -/
 theorem legacy_reads_weight_two_receive_as_provider :
     ((-2 : F 5) ≠ 1 ∧ (-2 : F 5) ≠ -1) ∧ BalancedInteractions [push2, pullW2] ∧
     pullW2.legacyEvent.direction = .provide := by
@@ -233,9 +214,8 @@ theorem legacy_reads_weight_two_receive_as_provider :
     · have h' : (#[0] : Array (F 5)) ≠ msg := fun e => h e.symm
       simp [balanceOf, push2, pullW2, h']
 
-/-- A5: a signed receive of weight `2` against two unit providers over `F 5` is
-LogUp-balanced, yet all three read as providers and nothing reads as a receive. Count balance
-needs unit events on the receive side. -/
+/-- A receive of weight `2` against two unit providers over `F 5` is LogUp-balanced, yet all
+three read as providers. Count balance needs unit events on the receive side. -/
 theorem logUp_unit_receives_necessary :
     BalancedInteractions [push5, push5, pullW2] ∧
     ¬ CountBalanced Interaction.legacyEvent [push5, push5, pullW2] := by
@@ -254,8 +234,8 @@ theorem logUp_unit_receives_necessary :
     revert this
     decide
 
-/-- A6: a weight-2 provider and two unit receives over `F 5` are LogUp-balanced, yet the
-active counts are `1` and `2`. Count balance needs unit events on the provider side. -/
+/-- A weight-2 provider and two unit receives over `F 5` are LogUp-balanced, yet the active
+counts are `1` and `2`. Count balance needs unit events on the provider side. -/
 theorem logUp_unit_events_necessary :
     BalancedInteractions [push2, pull5, pull5] ∧
     ¬ CountBalanced Interaction.legacyEvent [push2, pull5, pull5] := by
@@ -277,20 +257,19 @@ theorem logUp_unit_events_necessary :
 def provide1 : Interaction (F 2) := (OneChannel (F 2)).emittedValue .provide 1 1 false
 def receive1 : Interaction (F 2) := (OneChannel (F 2)).emittedValue .receive 1 1 true
 
-/-- A3: the multiset model rejects two providers of a message with no receive. -/
+/-- The multiset model rejects two providers of a message with no receive. -/
 theorem multiset_rejects_two_providers :
     ¬ (BalanceModel.multiset (F 2)).Balanced [provide1, provide1] := by
   rw [BalanceModel.multiset_balanced_iff]
   simp [activePayloads, provide1, circuit_norm]
 
-/-- A9 in miniature: the multiset model accepts a matched pair over `F 2` ... -/
+/-- The multiset model accepts a matched pair over `F 2` ... -/
 theorem multiset_accepts_matched_pair :
     (BalanceModel.multiset (F 2)).Balanced [provide1, receive1] := by
   rw [BalanceModel.multiset_balanced_iff]
   simp [activePayloads, provide1, receive1, circuit_norm]
 
-/-- ... which the legacy guard rejects, so `F 2` cannot silently fall back to LogUp (A14):
-another instance of `legacy_length_le_one_over_F2`. -/
+/-- ... which the legacy relation rejects. -/
 theorem logUp_rejects_matched_pair : ¬ BalancedInteractions [provide1, receive1] :=
   fun h => absurd (legacy_length_le_one_over_F2 _ h) (by simp)
 
@@ -299,9 +278,9 @@ def receiveTaggedPush : Interaction (F 2) :=
   (NeverDirected (F 2)).emittedValue .receive 1 0 false
 def disabledPush : Interaction (F 2) := (NeverDirected (F 2)).emittedValue .provide 0 0 false
 
-/-- A7: the provider role is necessary for the bridge from a push's requirement to a pull's
-guarantee. A receive-tagged interaction satisfies its requirement trivially, matches the
-payload and is active, yet the receiver's guarantee is `False`. -/
+/-- The provider role is necessary for the bridge from a push's requirement to a pull's
+guarantee: an active receive-tagged interaction with the same payload satisfies its requirement
+trivially, yet the receiver's guarantee is `False`. -/
 theorem bridge_provider_role_necessary :
     receiveTaggedPush.directedEvent.active = true ∧
     receiveTaggedPush.directedEvent.payload = neverReceive.directedEvent.payload ∧
@@ -311,7 +290,7 @@ theorem bridge_provider_role_necessary :
     DirectedChannel.emittedValue_requirements_iff, DirectedChannel.emittedValue_guarantees_iff]
   simp [NeverDirected]
 
-/-- A8: activity is necessary for the bridge. A disabled provider owes nothing. -/
+/-- Activity is necessary for the bridge: a disabled provider owes nothing. -/
 theorem bridge_activity_necessary :
     disabledPush.directedEvent.direction = .provide ∧
     disabledPush.directedEvent.payload = neverReceive.directedEvent.payload ∧
@@ -322,7 +301,7 @@ theorem bridge_activity_necessary :
   simp [NeverDirected]
 end Necessity
 
-/-! ## Consistency under a model, and what happens under the wrong one (A15, A17) -/
+/-! ## Consistency under matching and mismatched models -/
 section Consistency
 variable {K : Type} [FiniteField K] [DecidableEq K]
 variable {Message : TypeMap} [ProvableType Message]
@@ -335,7 +314,7 @@ def PChannel (P : F 2 → Prop) : DirectedChannel (F 2) field where
 def pProvide (P : F 2 → Prop) : Interaction (F 2) := (PChannel P).emittedValue .provide 1 1 false
 def pReceive (P : F 2 → Prop) : Interaction (F 2) := (PChannel P).emittedValue .receive 1 1 true
 
-/-- A15 in miniature, over `F 2`. The guarantee of the receive is not free: it is `P 1` ... -/
+/-- Over `F 2`, the guarantee of the receive is `P 1` ... -/
 theorem pReceive_guarantees_iff (P : F 2 → Prop) (data : ProverData (F 2)) :
     (pReceive P).Guarantees data ↔ P 1 := by
   simp [pReceive, PChannel, Interaction.Guarantees, Interaction.msgVector,
@@ -349,13 +328,8 @@ theorem multiset_accepts_pPair (P : F 2 → Prop) :
   rw [BalanceModel.multiset_balanced_iff]
   simp [activePayloads, pProvide, pReceive, circuit_norm]
 
-/-- ... so the pair's requirements give the receive's guarantee through the consistency of the
-channel under the multiset model, found by instance search. With two interactions this is
-`P 1 → P 1` once both sides are unfolded (`pPair_requirements_iff` below), so what the fixture
-shows is that the correct pairing resolves and that `ConsistentWith.consistent` composes on a
-goal that is refutable without the requirement; the transport itself is the general theorem
-`guarantees_of_requirements_of_pullsSupported`, whose pull-support hypothesis
-`transport_needs_support` shows to be load-bearing ... -/
+/-- ... so the pair's requirements give the receive's guarantee, through the channel's
+consistency under the multiset model, found by instance search ... -/
 theorem pReceive_guarantees_of_requirements (P : F 2 → Prop) (data : ProverData (F 2))
     (reqs : ∀ i ∈ [pProvide P, pReceive P],
       i.channel = (PChannel P).toRaw ∧ i.Requirements data) :
@@ -410,8 +384,7 @@ theorem multiset_accepts_two_legacy_pulls :
   decide
 
 /-- So a legacy channel is not consistent under the multiset model: the two pulls are balanced
-and meet their (empty) requirements, yet the pull of `3` would be granted `3 = 7`. No instance
-can exist for this pairing, and `FormalEnsembleWith.consistent` cannot be supplied for it. -/
+and meet their (empty) requirements, yet the pull of `3` would be granted `3 = 7`. -/
 theorem legacy_not_consistentWith_multiset :
     ¬ (LegacyChannel (p := 5)).toRaw.ConsistentWith (.multiset (F 5)) := by
   intro h
@@ -442,13 +415,9 @@ theorem logUp_rejects_directed_pair :
   revert this
   decide
 
-/-- That mismatch does not make the obligation false, it makes it vacuous. Under LogUp every
-directed gate is `0` or `1` and nothing cancels, so a LogUp-balanced list on a directed channel
-has no active interaction and every directed guarantee holds with a false premise. The
-obligation is therefore a theorem for every directed channel, over every field, whatever the
-guarantee. What excludes this pairing is not the obligation but that its statement is met only
-by inactive traces (`logUp_rejects_directed_pair` is the two-element instance) and the static
-tie `BalanceModel.Reads` below. -/
+/-- That mismatch makes the obligation vacuous rather than false: under LogUp every directed
+gate is `0` or `1` and nothing cancels, so a balanced list on a directed channel has no active
+interaction. `BalanceModel.Reads` is what excludes this pairing. -/
 theorem directed_consistentWith_logUp (channel : DirectedChannel K Message) :
     channel.toRaw.ConsistentWith (.logUp K) := by
   constructor
@@ -481,19 +450,18 @@ theorem directed_consistentWith_logUp (channel : DirectedChannel K Message) :
 example : (NeverDirected (F 5)).toRaw.ConsistentWith (.logUp (F 5)) :=
   directed_consistentWith_logUp _
 
--- Instance search declares neither mismatch, so a builder that takes the obligation as an
--- instance argument rejects both at compile time; only a hand-written instance gets past it.
--- `#check_failure` succeeds exactly when elaboration fails; its report is dropped.
+-- Instance search finds neither mismatched pairing. `#check_failure` succeeds exactly when
+-- elaboration fails; its report is dropped.
 #guard_msgs (drop info) in
 #check_failure (inferInstance : (LegacyChannel (p := 5)).toRaw.ConsistentWith (.multiset (F 5)))
 #guard_msgs (drop info) in
 #check_failure (inferInstance : (OneChannel (F 5)).toRaw.ConsistentWith (.logUp (F 5)))
 
-/-- The static tie: each model reads exactly one channel kind, over any field ... -/
+/-- Each model reads exactly one channel kind, over any field ... -/
 example : (BalanceModel.logUp K).Reads (Channel K) := inferInstance
 example : (BalanceModel.multiset K).Reads (DirectedChannel K) := inferInstance
 
--- ... and a channel of the other kind is a type error, not a proposition anyone can prove.
+-- ... and a channel of the other kind is a type error.
 #guard_msgs (drop info) in
 #check_failure (inferInstance : (BalanceModel.logUp (F 2)).Reads (DirectedChannel (F 2)))
 #guard_msgs (drop info) in
@@ -505,7 +473,7 @@ example (channel : DirectedChannel K Message) :
   simp only [circuit_norm]
 end Consistency
 
-/-! ## The directed reading on malformed tags and on activity (A17) -/
+/-! ## The directed reading on malformed tags and activity -/
 section Reading
 variable {K : Type} [FiniteField K] [DecidableEq K]
 
@@ -514,10 +482,9 @@ gate and permission to assume. Only a raw construction can produce it; the typed
 always emit a well-formed tag. -/
 def malformed : Interaction (F 5) := ⟨(NeverDirected (F 5)).toRaw, 1, #[0, 2], rfl, true⟩
 
-/-- A17, malformed tags: the directed reading is total and reads a malformed tag as an active
-receive, never as a provider, so it can support nothing. That receive assumes nothing: its
-guarantee holds for every prover data although the channel's guarantee is `False`. And the
-Layer 0 contract rejects it, so it cannot occur in a sound row. -/
+/-- The directed reading reads a malformed tag as an active receive, never as a provider, and
+its guarantee holds although the channel's guarantee is `False`; the local contract rejects
+it. -/
 theorem malformed_reads_as_receive_assuming_nothing (data : ProverData (F 5)) :
     malformed.directedEvent.direction = .receive ∧ malformed.directedEvent.active = true ∧
     malformed.Guarantees data ∧ ¬ malformed.Requirements data := by
@@ -528,8 +495,8 @@ theorem malformed_reads_as_receive_assuming_nothing (data : ProverData (F 5)) :
   · simp [malformed, Interaction.Requirements, Interaction.msgVector, DirectedChannel.toRaw,
       Direction.tag, h.1, h.2]
 
-/-- A17, activity: a disabled interaction is not an active event in the directed reading,
-whatever its direction, payload and permission, over any field. -/
+/-- A disabled interaction is not an active event in the directed reading, whatever its
+direction, payload and permission. -/
 example (direction : Direction) (msg : K) (permission : Bool) :
     ((OneChannel K).emittedValue direction 0 msg permission).directedEvent.active = false := by
   simp [circuit_norm]
@@ -564,23 +531,21 @@ theorem disabled_receive_needs_no_support :
     simp [activePayloads, disabledReceive, circuit_norm]
 end Reading
 
-/-! ## Explicit models (A14) -/
+/-! ## Explicit models -/
 section Models
 
-/-- A14, typechecking test: the model-aware statement is stated over any field with an
-explicit model; there is no default instance to fall back to. The `Prop` is not proved. -/
+/-- The model-aware statement takes an explicit model, over any field. -/
 example {F : Type} [FiniteField F] [DecidableEq F] {PublicIO : TypeMap} [ProvableType PublicIO]
     (model : BalanceModel F) (ens : Ensemble F PublicIO) (publicInput : PublicIO F) : Prop :=
   ens.StatementWith model publicInput
 
-/-- A14, typechecking test: the multiset model is one such explicit model, over any field. -/
+/-- The multiset model, over any field. -/
 example {F : Type} [FiniteField F] [DecidableEq F] {PublicIO : TypeMap} [ProvableType PublicIO]
     (ens : Ensemble F PublicIO) (publicInput : PublicIO F) : Prop :=
   ens.StatementWith (.multiset F) publicInput
 
-/-- `BalanceModel` is an abstract count/support interface: a model that reads every
-interaction as an inactive event satisfies every field. Nothing in the structure relates
-`view` to the raw channel contract. -/
+/-- A model that reads every interaction as an inactive event satisfies every field of
+`BalanceModel`: the structure does not relate `view` to the channel contract. -/
 def blindModel (F : Type) [FiniteField F] [DecidableEq F] : BalanceModel F where
   Verified _ := True
   SideCondition _ := True
@@ -591,13 +556,8 @@ def blindModel (F : Type) [FiniteField F] [DecidableEq F] : BalanceModel F where
   pullsSupported := by intro l _ _; simp [PullsSupported]
   countBalanced := by intro l _ _ _; simp [CountBalanced, activeCount]
 
-/-- So the interface alone does not reject a lone active receive that no provider supports,
-although its raw guarantee (`message = 1`, for payload `0`) is false. Ruling this out is the
-job of the correspondence law of the reading a model uses: for the directed reading,
-`DirectedChannel.directedEvent_emittedValue` ties the view to the evaluated interactions of
-the channel and `DirectedChannel.guarantees_of_requirements_of_pullsSupported` transports the
-requirement of the supporting provider to the guarantee of the receive. That law lives
-outside the structure. -/
+/-- So the structure alone does not reject a lone active receive that no provider supports,
+although its guarantee (`message = 1`, for payload `0`) is false. -/
 example : (blindModel (F 2)).Balanced [(OneChannel (F 2)).emittedValue .receive 1 0 true] :=
   ⟨trivial, trivial⟩
 
@@ -609,7 +569,7 @@ example (data : ProverData (F 2)) :
   decide
 end Models
 
-/-! ## The Layer 0 prototype -/
+/-! ## A directed circuit and ensemble -/
 section Prototype
 
 structure ProtoInput (F : Type) where
@@ -645,13 +605,12 @@ example {F : Type} [FiniteField F] (input : Var ProtoInput F) :
     ExplicitCircuit ((proto F).main input) := by
   infer_explicit_circuit
 
-/-- The prototype called as a subcircuit of another circuit. -/
+/-- `proto` called as a subcircuit of another circuit. -/
 def nestedProto (F : Type) [FiniteField F] (input : Var ProtoInput F) : Circuit F Unit :=
   proto F input
 
 /-- The tag survives subcircuit composition, flattening and evaluation: the interactions
-collected from the nested prototype are its four directed events, payload and tag intact and
-in circuit order. -/
+collected from `nestedProto` are its four directed events, with payload and tag, in order. -/
 example {F : Type} [FiniteField F] (env : Environment F) (input : Var ProtoInput F) :
     ((nestedProto F input).operations 0).interactionValues env =
       [ (OneChannel F).emittedValue .receive 1 (env input.x) true,
@@ -661,22 +620,20 @@ example {F : Type} [FiniteField F] (env : Environment F) (input : Var ProtoInput
   simp [circuit_norm, nestedProto, proto, Operations.interactions,
     GeneralFormalCircuit.toSubcircuit_interactions, DirectedChannel.eval_toRaw]
 
-/-- The prototype ensemble: one table on one directed channel, no verifier. -/
+/-- One table of `proto` on one directed channel, and no verifier. -/
 def protoEnsemble (F : Type) [FiniteField F] : Ensemble F unit where
   tables := [⟨ proto F ⟩]
   channels := [(OneChannel F).toRaw]
 
-/-- The `consistent` field of `FormalEnsembleWith` for the prototype ensemble under the
-multiset model, over any field: one case per channel, each closed by instance search. -/
+/-- The `consistent` field of `FormalEnsembleWith` for `protoEnsemble` under the multiset
+model: one case per channel, each closed by instance search. -/
 example {F : Type} [FiniteField F] [DecidableEq F] :
     ∀ channel ∈ (protoEnsemble F).channels, channel.ConsistentWith (.multiset F) := by
   simp only [protoEnsemble, List.mem_singleton, forall_eq]
   infer_instance
 
-/-- A14, typechecking tests: the model-aware statement of the prototype ensemble elaborates
-over any field with an explicit model, in particular the multiset model, and over `F 2`. None
-of these `Prop`s is proved here; the directed statement with a nonempty witness is A9
-(roadmap Layer 4). -/
+/-- The model-aware statement of `protoEnsemble` elaborates with an explicit model, over any
+field and over `F 2`. -/
 example {F : Type} [FiniteField F] [DecidableEq F] (model : BalanceModel F) : Prop :=
   (protoEnsemble F).StatementWith model ()
 example {F : Type} [FiniteField F] [DecidableEq F] : Prop :=
@@ -684,7 +641,7 @@ example {F : Type} [FiniteField F] [DecidableEq F] : Prop :=
 example (model : BalanceModel (F 2)) : Prop := (protoEnsemble (F 2)).StatementWith model ()
 example : Prop := (protoEnsemble (F 2)).StatementWith (.multiset (F 2)) ()
 
-/-- The empty prototype table over `F 2`: no rows, hence no interactions. -/
+/-- The empty table of `proto` over `F 2`: no rows, hence no interactions. -/
 def emptyProtoTable : Table (F 2) where
   component := ⟨ proto (F 2) ⟩
   width := 2
@@ -692,7 +649,7 @@ def emptyProtoTable : Table (F 2) where
   data := fun _ _ => #[]
   uniform_width := by simp
 
-/-- The empty witness of the prototype ensemble over `F 2`. -/
+/-- The empty witness of `protoEnsemble` over `F 2`. -/
 def emptyProtoWitness : EnsembleWitness (protoEnsemble (F 2)) where
   tables := [emptyProtoTable]
   data := fun _ _ => #[]
@@ -708,9 +665,7 @@ def emptyProtoWitness : EnsembleWitness (protoEnsemble (F 2)) where
     subst ht
     rfl
 
-/-- The legacy statement of the prototype ensemble is satisfiable over `F 2`: the empty trace
-has no interactions, so every channel is balanced. The legacy limitation is
-`legacy_length_le_one_over_F2`, not unsatisfiability of the statement. -/
+/-- The legacy statement of `protoEnsemble` is satisfiable over `F 2`, by the empty trace ... -/
 theorem legacyProto_satisfiable : (protoEnsemble (F 2)).Statement () := by
   refine ⟨emptyProtoWitness, rfl, ?_, ?_⟩
   · rw [EnsembleWitness.Constraints, EnsembleWitness.forall_mem_allTables_iff]
@@ -725,9 +680,8 @@ theorem legacyProto_satisfiable : (protoEnsemble (F 2)).Statement () := by
     rw [h]
     simp [BalancedInteractions, balanceOf, ZMod.ringChar_zmod_n]
 
-/-- And it is satisfied only by empty prototype tables: every row puts four interactions on
-the channel, where `legacy_length_le_one_over_F2` allows at most one. This is the precise form
-of the legacy limitation for this ensemble. -/
+/-- ... and only by empty tables: every row puts four interactions on the channel, where
+`legacy_length_le_one_over_F2` allows at most one. -/
 theorem legacyProto_only_empty (witness : EnsembleWitness (protoEnsemble (F 2)))
     (balanced : witness.BalancedChannels) : ∀ table ∈ witness.tables, table.table = [] := by
   obtain ⟨t, ht⟩ := List.length_eq_one_iff.mp witness.same_length.symm

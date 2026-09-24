@@ -3,73 +3,20 @@ import Clean.Air.FlatEnsemble
 /-!
 # Balance models
 
-A `BalanceModel` packages what a proof-system verifier establishes about the interactions
-on one channel, the side conditions the soundness argument needs in addition, the reading
-of interactions as bus events, and the two derivations that feed the shared kernel of
-`Clean.Air.Balance` (`PullsSupported` and `CountBalanced`).
+A `BalanceModel` packages the relation a proof-system verifier establishes on one channel's
+interactions, its side conditions, a reading of interactions as events (`view`), and the
+derivations of `PullsSupported` and `CountBalanced` (`Clean.Air.Balance`) from it.
+`BalanceModel.logUp` is `BalancedInteractions` under the sign reading; `BalanceModel.multiset`
+is a permutation of active provided and received payloads under the directed reading
+`Interaction.directedEvent`, with no characteristic bound.
 
-## An abstract count/support interface
-
-The structure fixes only the shape of the argument. Its `view` is supplied by the model, and
-its two kernel derivations are stated relative to that view; nothing in the structure relates
-the view to the raw channel contract, `Interaction.Guarantees` and `Interaction.Requirements`.
-A model that reads every interaction as an inactive event satisfies every field, and its
-`Balanced` then accepts an active receive that no provider supports (see `blindModel` in
-`Clean/Air/Test/BusBalance.lean`).
-
-What makes a model usable in a channel soundness argument is a correspondence law for the
-encoding it reads, proved separately from this structure: the view recovers the payload,
-direction and activity of every evaluated interaction of the channel; the argument is applied
-per raw channel, to `interactionsWith channel`; permission to assume the guarantee stays with
-`assumeGuarantees`; and `PullsSupported view` transports the requirement of the supporting
-provider to the guarantee of the receive. For the directed encoding, the local contract
-rejects malformed tags (`DirectedChannel.toRaw`), `DirectedChannel.directedEvent_emittedValue`
-is the recovery lemma and `DirectedChannel.guarantees_of_requirements_of_pullsSupported` is
-the transport theorem, both below.
-
-## A model only fits the encoding it reads
-
-A model and a channel are chosen independently, and after erasure to `RawChannel` nothing
-records which encoding a channel uses. The two mismatched pairings fail differently. The
-multiset model applied to a legacy channel strips the last payload element as if it were a
-tag and accepts interactions whose messages never matched: a wrong relation that has
-witnesses. The LogUp model applied to a directed channel is satisfied only by traces with no
-active interaction, because every directed gate is `0` or `1` and nothing cancels: an empty
-relation, over which any soundness statement is vacuous.
-
-Two declarations tie a model to its encoding.
-
-* `RawChannel.ConsistentWith model` is the soundness obligation of one channel under a model:
-  balance under the model and the requirements of all interactions on the channel imply
-  their guarantees. It is the legacy `RawChannel.Consistent` with the model as a parameter,
-  it is declared for exactly the two supported pairings, and `FormalEnsembleWith` demands it
-  of every channel. Instance search finds it for a correct pairing and for neither mismatch.
-  As a proposition it is *false* for the multiset model on a legacy channel whose guarantee
-  is refutable (`legacy_not_consistentWith_multiset` in `Clean/Air/Test/BusBalance.lean`),
-  but *true* for the LogUp model on every directed channel, whatever the guarantee, precisely
-  because that relation admits no active interaction (`directed_consistentWith_logUp`, same
-  file). So the obligation alone does not exclude the vacuous pairing; a hand-written
-  instance would discharge it.
-* `BalanceModel.Reads model Ch` records the typed channel constructor `Ch` whose erasure a
-  model reads, with the erasure and the consistency law for it. It has the same two
-  instances (`logUp` reads `Channel`, `multiset` reads `DirectedChannel`) and is what the
-  model-aware builders (roadmap Layer 3) take channels through, so that a channel of the
-  wrong kind is a type error at the line that adds it, not a proposition somebody can prove.
-  Custom raw channels enter through the obligation directly.
-
-## The two models
-
-* `BalanceModel.logUp` is today's `BalancedInteractions`, split into its field-sum relation
-  and its no-wrap guard, under the legacy sign reading of direction
-  (`Interaction.legacyEvent`). Its `Balanced` predicate is `BalancedInteractions` by
-  definition, so the legacy ensemble statement is the LogUp instance of the model-aware one.
-* `BalanceModel.multiset` is the permutation of active provided and received payloads under
-  the directed reading (`Interaction.directedEvent`) of `DirectedChannel` interactions. It
-  has no side condition and no characteristic bound.
-
-The model-aware ensemble entry points (`Ensemble.StatementWith` and friends) take the model
-explicitly. There is deliberately no default model instance: a user of a characteristic-2
-field has to name the model, and cannot pick LogUp by omission.
+The structure does not relate `view` to the channel contract, so a model only fits the
+encoding it reads: the multiset model on a legacy channel accepts messages that never matched,
+and the LogUp model on a directed channel is met only by traces with no active interaction.
+`RawChannel.ConsistentWith` is the per-channel soundness obligation under a model,
+`BalanceModel.Reads` ties each model to its typed channel constructor, and the model-aware
+ensemble statements (`Ensemble.StatementWith` and friends) take the model explicitly, with no
+default.
 -/
 
 variable {F : Type} [FiniteField F] [DecidableEq F]
@@ -77,12 +24,9 @@ variable {Message : TypeMap} [ProvableType Message]
 
 /--
 A balance model: the per-channel relation a verifier establishes, the side conditions the
-soundness argument needs, the reading of interactions as events, and the derivations of the
-kernel facts.
-
-The split between `Verified` and `SideCondition` is what leaves room for a capacity premise
-(Clean issue #452): an ensemble-wide bound computed by the verifier can be bridged to the
-per-channel `SideCondition` of the LogUp model without touching the multiset model.
+soundness argument needs, the reading of interactions as events, and the derivations of
+`PullsSupported` and `CountBalanced`. `SideCondition` is kept apart from `Verified` so that a
+capacity bound established by the verifier can discharge it.
 -/
 structure BalanceModel (F : Type) [FiniteField F] [DecidableEq F] where
   /-- The per-channel relation the proof-system verifier establishes. -/
@@ -90,7 +34,7 @@ structure BalanceModel (F : Type) [FiniteField F] [DecidableEq F] where
   /-- Side conditions the soundness argument needs in addition to `Verified`. -/
   SideCondition : List (Interaction F) → Prop
   /-- How this model reads an interaction as a bus event. The structure does not tie this
-  reading to the raw channel contract; the model's correspondence law does. -/
+  reading to the channel contract; `RawChannel.ConsistentWith` does. -/
   view : Interaction F → Event F
   /-- The multiplicity discipline under which one interaction is one event. -/
   UnitEvent : Interaction F → Prop
@@ -140,7 +84,7 @@ def logUp (F : Type) [FiniteField F] [DecidableEq F] : BalanceModel F where
   countBalanced l verified side unit :=
     countBalanced_legacyEvent_of_balancedInteractions ⟨side, verified⟩ unit
 
-/-- The LogUp model's balance predicate is today's `BalancedInteractions`, by definition. -/
+/-- The LogUp model's balance predicate is `BalancedInteractions`, by definition. -/
 theorem logUp_balanced_iff (l : List (Interaction F)) :
     (logUp F).Balanced l ↔ BalancedInteractions l := Iff.rfl
 end BalanceModel
@@ -192,11 +136,9 @@ lemma directedEvent_emittedValue (direction : Direction) (enabled : F) (msg : Me
     by_cases h : enabled = 0 <;> simp [h]
 
 /--
-The lookup-style consistency of a directed channel: if every active receive is supported
-by an active provide of the same payload (which any balance model derives from its
-`Balanced` relation), then the requirements of all interactions imply their guarantees.
-This is the directed counterpart of `RawChannel.consistent_of_normal`; it needs no
-characteristic assumption.
+Lookup-style consistency of a directed channel: if every active receive is supported by an
+active provide of the same payload, the requirements of all interactions imply their
+guarantees. The directed counterpart of `RawChannel.consistent_of_normal`.
 -/
 theorem guarantees_of_requirements_of_pullsSupported (channel : DirectedChannel F Message)
     (interactions : List (Interaction F)) (data : ProverData F) :
@@ -230,17 +172,9 @@ end DirectedChannel
 
 /--
 The multiset model: active provided and received payloads are a permutation of each other, in
-the directed reading. No side condition and no characteristic bound.
-
-Its `UnitEvent` is the boolean-gate discipline: one interaction is one event when its gate is
-`0` or `1`. The relation does not depend on it (a gate of `2` reads as one active event, and the
-local contract of a directed channel is what rejects it), so it changes nothing the model
-accepts; it records the discipline under which the count derivation `countBalanced_of_balanced`
-should be invoked. The discipline is a convention, not an enforcement: `Verified` is a
-permutation of active payloads and `countBalanced_of_perm_activePayloads` is public, so count
-balance is available from `Verified` alone. The VM adapter (`Clean.Air.VmWith`) goes through
-`countBalanced_of_balanced` and supplies the gate fact from the row constraints
-(`DirectedVmTables.tables_channel`), which make every step's gate boolean.
+the directed reading, with no side condition and no characteristic bound. `UnitEvent` (a gate
+of `0` or `1`) does not affect the relation, which reads any nonzero gate as one active event;
+the boolean gate is enforced by the directed channel's local contract.
 -/
 def BalanceModel.multiset (F : Type) [FiniteField F] [DecidableEq F] : BalanceModel F where
   Verified l := (activePayloads Interaction.directedEvent l .provide).Perm
@@ -272,24 +206,14 @@ theorem BalanceModel.multiset_balanced_iff (l : List (Interaction F)) :
 
 namespace DirectedChannel
 /--
-The VM argument for a directed channel, over any field: the directed counterpart of
-`guarantees_of_requirements_of_requirements_of_guarantees`. Given the receives `pulls` and the
-provides `pushes` of a channel's rows, paired by index, count balance on their concatenation
-(which the multiset model derives from its relation), and the per-row implications
-`G pulls[i] → R pushes[i]`, every row also satisfies the converse. The kernel does the
-induction; this theorem supplies the count equality (`count_eq_of_countBalanced`) and the
-bridge from a provide's requirement to a receive's guarantee on the same payload.
+The VM argument for a directed channel, over any field: the counterpart of
+`guarantees_of_requirements_of_requirements_of_guarantees`. Given receives `pulls` and provides
+`pushes` paired by index, count balance on their concatenation and the row implications
+`G pulls[i] → R pushes[i]`, every row also satisfies the converse.
 
-`pulls_receive` is load-bearing: a provide among the pulls supplies a receive among the pulls
-without any row owing its guarantee (`pull_role_necessary` in the tests). `pushes_provide` is
-what the count-equality step consumes (`count_eq_pushes_provide_necessary`: an active receive
-among the pushes is counted on the push side under its payload key), but the statement of this
-theorem holds without it: an active receive assuming a refutable guarantee can never sit among
-the pushes, because every active provide of a refutable payload faces, by the row implication,
-a pull that assumed that refutable guarantee, and count balance then leaves no such receive
-for the pushes. That is a global count, not the kernel's induction. The hypothesis is kept so
-that the theorem is an instance of the kernel (decided 2026-09-23; the one recorded exception
-to the rule that a hypothesis needs a counterexample to the statement it sits on).
+`pulls_receive` is necessary (`pull_role_necessary` in `Clean/Air/Test/BusBalance.lean`).
+`pushes_provide` is needed by `count_eq_of_countBalanced`, though the conclusion also holds
+without it.
 -/
 theorem guarantees_of_requirements_of_requirements_of_guarantees
     (channel : DirectedChannel F Message) (pulls pushes : List (Interaction F))
@@ -333,13 +257,9 @@ end DirectedChannel
 -/
 
 /--
-A raw channel is consistent under a balance model if, for any interactions on that channel,
-balance under the model together with the requirements of all interactions implies the
-guarantees of all interactions: what the receivers assumed is justified by what the providers
-proved. This is the legacy `RawChannel.Consistent` with the model as a parameter.
-
-It is the obligation that ties a model to the encoding it reads. It mentions no circuit: it
-relates the channel's two predicates, the model's reading and the model's relation.
+A raw channel is consistent under a balance model if balance under the model and the
+requirements of all interactions on the channel imply their guarantees. This is
+`RawChannel.Consistent` with the model as a parameter.
 -/
 class RawChannel.ConsistentWith (channel : RawChannel F) (model : BalanceModel F) : Prop where
   consistent : ∀ (interactions : List (Interaction F)) (data : ProverData F),
@@ -368,11 +288,9 @@ instance (channel : DirectedChannel F Message) : channel.toRaw.ConsistentWith (.
 
 /--
 The typed channel constructor whose erasure a balance model reads, with the erasure and the
-consistency law for it. A builder that takes its channels as `Ch Message` and erases them
-through `toRaw` cannot be handed a channel of another kind: for a mismatched pairing there is
-no instance, so the call is a type error at the line that adds the channel. This is the static
-tie between models and channel kinds. `RawChannel.ConsistentWith` alone is not, since it is
-provable for the LogUp model on every directed channel.
+consistency law for it. A builder taking channels through this class rejects a channel of the
+wrong kind as a type error; `RawChannel.ConsistentWith` alone does not, since it holds
+vacuously for the LogUp model on every directed channel.
 -/
 class BalanceModel.Reads (model : BalanceModel F)
     (Ch : (Message : TypeMap) → [ProvableType Message] → Type) where
@@ -454,18 +372,10 @@ theorem completeness_iff_completenessWith_logUp (ens : Ensemble F PublicIO)
 end Ensemble
 
 /--
-A formal ensemble whose soundness proof is bound to an explicit balance model.
-
-`consistent` is the per-channel soundness obligation under the model. Instances exist for
-legacy channels under `logUp` and for directed channels under `multiset`, so for a correct
-pairing the field is found by instance search (`fun _ _ => inferInstance` after a case split
-on the channel list), and instance search finds nothing for either mismatch. It is not a proof
-that the model reads the channels' encoding: the multiset model on a legacy channel with a
-refutable guarantee makes it false, but the LogUp model on a directed channel makes it true
-for every guarantee, since that relation is met only by inactive traces, and a bundle built by
-hand for that pairing has a vacuous `soundness`. The model-aware builders avoid this by taking
-typed channels through `BalanceModel.Reads`; a bundle assembled by hand should come with a
-satisfiability witness for its statement.
+A formal ensemble whose soundness proof is bound to an explicit balance model. `consistent` is
+found by instance search for a correct model/channel pairing. It also holds, vacuously, for the
+LogUp model on directed channels, so a bundle built by hand rather than through
+`SoundEnsembleWith` should come with a satisfiability witness for its statement.
 -/
 structure FormalEnsembleWith (F : Type) [FiniteField F] [DecidableEq F] (model : BalanceModel F)
     (PublicIO : TypeMap) [ProvableType PublicIO] where

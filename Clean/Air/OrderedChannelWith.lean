@@ -4,63 +4,18 @@ import Clean.Air.OrderedChannel
 /-!
 # Ordered channels under an explicit balance model
 
-The staged construction of `Clean.Air.OrderedChannel` proves ensemble soundness for
-lookup-style channels from an ordering of the tables, using two facts about each finished
-channel: its interactions are balanced (`BalancedInteractions`) and it is consistent
-(`RawChannel.Consistent`). Both are the LogUp instances of the model-aware notions of
-`Clean.Air.BalanceModel`, `BalanceModel.Balanced` and `RawChannel.ConsistentWith`. This file
-restates the construction with the balance model as an explicit parameter. Nothing in the
-argument depends on which model is used: the consistency obligation is exactly what the
-induction consumes. The legacy file is untouched; its notions are the `BalanceModel.logUp`
-instances of these, by definition (`partialBalancedChannel_iff_partialBalancedChannelWith_logUp`,
-`Ensemble.tableSoundness_iff_tableSoundnessWith_logUp`) or pointwise
-(`SoundEnsemble.withLogUp`, `SoundEnsembleWith.toSoundEnsemble`). The induction proofs are
-therefore duplicated between the two files. The legacy proofs could become one-line wrappers
-of these (the `Iff.rfl` lemmas and `consistent_iff_consistentWith_logUp` are what that takes),
-but only once the definitions of `Clean.Air.OrderedChannel` are split from its theorems, since
-this file imports that one; that restructuring is deferred, and until then a change to the
-argument (for instance the #452 capacity bridge) has to be made twice.
+The staged construction of `Clean.Air.OrderedChannel`, with the balance model as an explicit
+parameter: balance is `BalanceModel.Balanced` and consistency `RawChannel.ConsistentWith`. The
+legacy notions are the `BalanceModel.logUp` instances, by definition or through
+`SoundEnsemble.withLogUp` and `SoundEnsembleWith.toSoundEnsemble`. The induction proofs
+duplicate those of `Clean.Air.OrderedChannel`, which could become wrappers once that file's
+definitions are split from its theorems.
 
-## The builders and the static tie
-
-`SoundEnsembleWith F model PublicIO` is the model-aware counterpart of `SoundEnsemble`. Its
-builders take typed channels through `BalanceModel.Reads model Ch`: `addChannel` and
-`addFinishedChannel` accept a `Ch Message` only when `Ch` is the channel kind the model reads
-(`Channel` under `logUp`, `DirectedChannel` under `multiset`), erase it with `Reads.toRaw`,
-which `circuit_norm` rewrites to the channel's own `toRaw` so that the side conditions of
-`addTable` see the same raw channel a table exposes, and record its consistency from
-`Reads.consistentWith`. A channel of the other kind is a type error at the line that adds it.
-Custom raw channels enter through `addRawChannel` and `addFinishedRawChannel`, gated on
-`[channel.ConsistentWith model]`; instance search declares that class for the two supported
-pairings only, so a hand-written instance is what a reviewer looks for there. A second escape
-hatch is `SoundEnsemble.withLogUp`: the legacy `SoundEnsemble.addChannel` is unguarded and
-`withLogUp` takes the consistency of every channel as a proof term, and since
-`RawChannel.Consistent` is a theorem for every directed channel (`directed_consistentWith_logUp`
-in the tests), a directed channel can be carried under LogUp that way without any instance.
-Both routes produce the pairing whose statement is met only by inactive traces; a bundle built
-through either should come with a satisfiability witness, as `FormalEnsembleWith` asks of every
-hand-assembled bundle. A reviewer looks for a hand-written `ConsistentWith` instance and for
-the `consistent` argument of `withLogUp`.
-
-The record carries the consistency of every channel it holds (`channels_consistent`), not only
-of the finished ones, because `FormalEnsembleWith.consistent`, which `toFormal` fills, demands
-it of every channel of the ensemble. Marking a channel finished therefore needs no further
-obligation (`markFinished` takes only the membership proof), and `finished_consistent` is
-derived. This is the one place where the model-aware record differs in shape from the legacy
-`SoundEnsemble`, whose `finished_consistent` is a field and whose `addChannel` is unguarded.
-
-## Where a capacity premise enters
-
-`Ensemble.StatementWith model` asks, per channel, for `model.Balanced`, which is
-`SideCondition ∧ Verified`. The proof system's verifier establishes `Verified`; for `logUp` the
-side condition is the no-wrap guard `length < ringChar F ∨ ringChar F = 0`, which the statement
-assumes today. Clean issue #452 replaces that assumption by a bound the verifier computes from
-the ensemble's shape (table heights times interaction counts, plus the verifier's own
-interactions). Its bridge is a theorem of the form "the capacity bound of the ensemble implies
-the side condition of every channel", which turns a statement mentioning only `Verified` and
-the bound into `StatementWith (.logUp F)`. Nothing in this file has to change for it, and the
-multiset model's side condition is `True`, so no such bound is ever imposed on the directed
-path.
+`SoundEnsembleWith F model PublicIO` takes typed channels through `BalanceModel.Reads`
+(`addChannel`, `addFinishedChannel`), so a channel of the wrong kind is a type error, and raw
+channels through `[channel.ConsistentWith model]` (`addRawChannel`, `addFinishedRawChannel`).
+Unlike `SoundEnsemble`, it records the consistency of every channel, not only the finished
+ones, because `FormalEnsembleWith` demands it.
 -/
 
 variable {F : Type} [FiniteField F] [DecidableEq F]
@@ -482,14 +437,10 @@ def empty (F : Type) [FiniteField F] [DecidableEq F] (model : BalanceModel F)
 @[circuit_norm] lemma empty_verifier : (empty F model PublicIO).verifier = .empty F PublicIO := rfl
 
 /-- Add a table whose assumed channels are all finished and which adds no requirement on a
-finished channel. The side conditions are decided by `simp [circuit_norm]` from the table's
-metadata, as for the legacy builder.
-
-Like the legacy `addTable`, and like every builder here that takes proof arguments, the
-definition itself is in `circuit_norm`, so that `simp` unfolds an application instead of
-matching its projection lemmas against the supplied proofs: a proof that `simp` produced by
-definitional steps alone has the reduced goal as its type, and matching it against the
-declared side condition fails at the transparency `simp` uses. -/
+finished channel; the side conditions are decided by `simp [circuit_norm]`. Like every builder
+here with proof arguments, the definition is in `circuit_norm`, so that `simp` unfolds it
+instead of matching projection lemmas against the supplied proofs, which fails at `simp`'s
+transparency. -/
 @[circuit_norm]
 def addTable (soundEns : SoundEnsembleWith F model PublicIO) (table : Component F)
     (grts_subset_finished : table.circuit.channelsWithGuarantees ⊆ soundEns.finished
@@ -560,10 +511,8 @@ variable {channel : Ch Message}
 end Typed
 
 /--
-Add a raw channel that is consistent under the model. This is the escape hatch for custom raw
-channels; instance search declares `ConsistentWith` for legacy channels under `logUp` and
-directed channels under `multiset` only, so any other pairing needs a hand-written instance
-here.
+Add a raw channel that is consistent under the model. `ConsistentWith` instances exist only for
+legacy channels under `logUp` and directed channels under `multiset`.
 -/
 def addRawChannel (soundEns : SoundEnsembleWith F model PublicIO) (channel : RawChannel F)
     [channel.ConsistentWith model] : SoundEnsembleWith F model PublicIO where
@@ -648,7 +597,7 @@ variable {channel : Ch Message}
   (soundEns.addFinishedChannel channel).verifier = soundEns.verifier := rfl
 end Typed
 
-/-- Add a consistent raw channel and mark it finished at once (escape hatch). -/
+/-- Add a consistent raw channel and mark it finished at once. -/
 def addFinishedRawChannel (soundEns : SoundEnsembleWith F model PublicIO) (channel : RawChannel F)
     [channel.ConsistentWith model] : SoundEnsembleWith F model PublicIO :=
   soundEns
@@ -716,14 +665,8 @@ def toSoundEnsemble (soundEns : SoundEnsembleWith F (.logUp F) PublicIO) :
 end SoundEnsembleWith
 
 /-- A legacy sound ensemble whose channels are all consistent is a sound ensemble under the
-LogUp model. The consistency of every channel is owed because the model-aware record carries
-it for the bundle; the legacy record has it only for the finished channels.
-
-This is an escape hatch: the legacy `addChannel` is unguarded and `consistent` is a proof
-term, not an instance, so a directed channel (consistent under LogUp, see
-`directed_consistentWith_logUp` in the tests) can enter a LogUp ensemble here. The resulting
-statement is met only by inactive traces; a bundle built this way should come with a
-satisfiability witness. -/
+LogUp model. Every directed channel is consistent under LogUp, so a directed channel can enter
+here; the resulting statement is met only by inactive traces. -/
 def SoundEnsemble.withLogUp (soundEns : SoundEnsemble F PublicIO)
     (consistent : ∀ channel ∈ soundEns.channels, channel.Consistent) :
     SoundEnsembleWith F (.logUp F) PublicIO where

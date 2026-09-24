@@ -3,55 +3,17 @@ import Clean.Circuit.Explicit
 /-!
 # Directed channels
 
-An opt-in channel construction for buses whose balance argument counts events instead of
-summing signed field multiplicities. It exists because, over a field of characteristic 2,
-a signed multiplicity cannot tell a provider from a receiver (`-1 = 1`), so the legacy
-`Channel` contract of `Clean.Circuit.Channel` becomes meaningless there. Legacy channels are
-untouched: `Channel`, `Channel.toRaw` and `emit/push/pull/pushIf/pullIf` keep their meaning.
+Channels whose interactions carry an explicit direction, for buses whose balance argument
+counts events instead of summing signed multiplicities. Over a field of characteristic `2` a
+signed multiplicity cannot tell a provider from a receiver (`-1 = 1`), so the contract of
+`Channel` (`Clean.Circuit.Channel`) says nothing useful there.
 
-## Tag representation
-
-A `DirectedChannel F Message` erases to a `RawChannel` of arity `size Message + 1`. The raw
-message of an interaction is `toElements msg` followed by one extra element, the
-`Direction.tag`: `0` for a provider, `1` for a receiver. The multiplicity is the activation
-gate and is required to be `0` or `1`; it never carries direction.
-
-This representation survives every existing stage without changing a public record:
-construction (`DirectedInteraction.toRaw`), subcircuit composition and collection (the
-interaction is an ordinary `AbstractInteraction` inside `FlatOperation.interact`), evaluation
-(`AbstractInteraction.eval` maps the tag together with the payload) and export (the tag is the
-last element of the exported message).
-
-The JSON of an interaction is only a serialization shape. The raw JSON of a directed interaction
-is the legacy channel/message/multiplicity object with one more message element, so it does not
-by itself identify the directed interpretation: a legacy interaction whose payload is one
-element longer has the same JSON. The interpretation is bound beside the interactions by the
-bus export protocol of `Clean.Air.BusProtocol` (a per-channel schema with the layout, the tag
-index and the gate and malformed-tag rules, under a protocol version and the ensemble's
-balance model); the interaction bytes are unchanged by it.
-
-## Malformed tags
-
-Raw interactions can be built without the typed constructors. A raw interaction on a directed
-channel whose last message element is neither tag fails the channel's `Requirements`, whatever
-its gate, so it cannot occur in a row whose soundness has been proved. The typed constructors
-always emit a well-formed tag, which is why the typed `DirectedInteraction.Requirements` does
-not mention it (`toRaw_requirements`).
-
-## Local contract
-
-For a directed channel with guarantee `G`, evaluated at a row:
-
-| operation | direction | may assume `G msg`? | must prove locally |
-| --- | --- | --- | --- |
-| `pushIf enabled msg` | provide | no | `enabled ∈ {0, 1}`, and `G msg` if `enabled ≠ 0` |
-| `pullIf enabled msg` | receive | yes, if `enabled ≠ 0` | `enabled ∈ {0, 1}` |
-| `emit .receive enabled msg` | receive | no | `enabled ∈ {0, 1}` |
-| `emit .provide enabled msg` | provide | no | as `pushIf` |
-
-`assumeGuarantees` keeps its legacy meaning of "permission to use the guarantee locally";
-direction is stored independently, which is what lets a receiver decline the guarantee
-(`emit .receive`) while still counting on the receiving side of the bus.
+A `DirectedChannel F Message` erases to a `RawChannel` of arity `size Message + 1`: the raw
+message is `toElements msg` followed by `Direction.tag` (`0` provide, `1` receive), and the
+multiplicity is an activation gate that must be `0` or `1`. A raw interaction whose tag is
+neither value fails the channel's `Requirements`. `assumeGuarantees` is independent of the
+direction, so a receiver can decline the guarantee (`emit .receive`). The JSON of a directed
+interaction has the legacy shape; `Clean.Air.BusProtocol` records how to interpret it.
 -/
 
 variable {F : Type} [FiniteField F]

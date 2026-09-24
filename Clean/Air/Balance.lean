@@ -8,37 +8,15 @@ variable {Message : TypeMap} [ProvableType Message]
 # Channel balance
 
 This module treats channel interactions as multisets and asks what properties can be
-deduced from the condition of _balance_. Its sections build on each other in this order:
+deduced from the condition of _balance_. It defines the LogUp relation `BalancedInteractions`
+(field sums of signed multiplicities, with a no-wrap guard), the channel classes
+`RawChannel.Consistent` and `RawChannel.Normal`, and a characteristic-free kernel of support
+and count facts over natural numbers (`Event`, `PullsSupported`, `CountBalanced`), with the VM
+argument `guarantees_of_requirements_of_count_eq`.
 
-1. **Legacy balance** (`balanceOf`, `BalancedInteractions`, the counting lemmas,
-   `exists_push_of_pull`): the LogUp relation with its no-wrap guard, under the sign
-   convention where multiplicity `-1` is a receive and any other nonzero multiplicity a
-   provide.
-2. **Channel classes** (`RawChannel.Consistent`, `RawChannel.Normal`, `consistent_of_normal`):
-   what a channel's guarantee and requirement predicates must satisfy for balance to justify
-   the guarantees. Typed `Channel`s are normal by construction.
-3. **The shared kernel** (`Event`, `Event.key`, `PullsSupported`, `activeCount`,
-   `CountBalanced`, `activePayloads`, `perm_activePayloads_of_countBalanced`,
-   `count_eq_of_countBalanced`, `guarantees_of_requirements_of_count_eq`): the support and
-   count facts and the VM reversal argument, over natural-number counts, parametrized by a
-   reading of interactions as events, with no field structure at all.
-4. **Interactions on a known channel** (`Interaction.requirements_iff_of_channel_eq`,
-   `Interaction.guarantees_iff_of_channel_eq`): the contract of an interaction restated on the
-   channel it is known to use.
-5. **Legacy bridges** (`Interaction.legacyEvent`,
-   `pullsSupported_legacyEvent_of_balancedInteractions`,
-   `countBalanced_legacyEvent_of_balancedInteractions`, `count_eq_of_balancedInteractions`):
-   the kernel facts derived from `BalancedInteractions` under the sign reading.
-6. **The legacy VM theorem** (`guarantees_of_requirements_of_requirements_of_guarantees`),
-   now a wrapper around the kernel, followed by its zero-padded variant and the
-   `activeInteractions` machinery that variant needs.
-
-Legacy public API whose statements are unchanged: `balanceOf`, `BalancedInteractions`,
-`exists_push_of_pull`, `one_ne_neg_one`, `RawChannel.Consistent`, `RawChannel.Normal`,
-`consistent_of_normal`, `activeInteractions`, and the legacy VM theorem with its
-`_of_mult_zero_iff` variant, both minus a redundant characteristic binder (see their
-docstrings). The directed reading `Interaction.directedEvent`, the balance models and the
-consistency obligation are in `Clean.Air.BalanceModel`.
+The VM theorem for signed channels, `guarantees_of_requirements_of_requirements_of_guarantees`,
+is derived from the kernel under the sign reading `Interaction.legacyEvent`. The directed
+reading and the balance models are in `Clean.Air.BalanceModel`.
 -/
 
 /--
@@ -313,12 +291,11 @@ lemma List.countP_eraseIdx {α : Type} {l : List α} {p : α → Bool} {i : ℕ}
       ring_nf
 
 /-
-## The shared kernel: events, support and count balance
+## Events, support and count balance
 
-Everything in this section is stated over natural-number counts and mentions no
-characteristic. An `Event` is the proof-facing view of one interaction: the logical payload
-it carries, its direction, and whether it is active. Different balance arguments read an
-`Interaction F` as an `Event F` differently, so the kernel is parametrized by that reading.
+Stated over natural-number counts, with no characteristic assumption. An `Event` is the
+payload, direction and activity of one interaction; every definition here is parametrized by
+the reading of interactions as events.
 -/
 
 /-- The proof-facing view of one bus interaction. -/
@@ -453,11 +430,8 @@ lemma length_activePayloads_of_direction {l : List α} {direction : Direction}
 
 omit [FiniteField F] in
 /--
-Count equality for the kernel's key, from count balance on `pulls ++ pushes` where the pulls
-are receives and the pushes are provides. For an active payload this is count balance itself,
-since the pulls contribute no provides and the pushes no receives; for the inactive key `none`
-it is that the two lists have the same length and, by count balance, the same number of active
-events. This is the directed counterpart of `count_eq_of_balancedInteractions`.
+Count balance on `pulls ++ pushes`, where the pulls are receives and the pushes provides,
+gives equal counts of every `Event.key`. The inactive key `none` also needs equal lengths.
 -/
 theorem count_eq_of_countBalanced {pulls pushes : List α}
     (balance : CountBalanced view (pulls ++ pushes))
@@ -525,14 +499,11 @@ theorem count_eq_of_countBalanced {pulls pushes : List α}
     exact List.countP_congr fun b _ => by simp [Event.key_eq_some_iff]
 
 /--
-The shared VM argument, with no field structure at all.
-
-Given `pulls` and `pushes` of equal length, a `key` (the payload), per-key count equality,
-a "bridge" that turns a push's requirement into a pull's guarantee on the same key, and the
-per-row implications `G pulls[i] → R pushes[i]`, every row also satisfies the converse
-`R pushes[i] → G pulls[i]`. The proof is the induction of
-`guarantees_of_requirements_of_requirements_of_guarantees`, which is now a wrapper around it:
-find the push `j` with the same key as pull `i`, then contract the pair `(i, j)` and recurse.
+The VM argument, with no field structure: given per-key count equality of `pulls` and
+`pushes`, a `bridge` from a push's requirement to the guarantee of a pull with the same key,
+and the row implications `G pulls[i] → R pushes[i]`, the converse `R pushes[i] → G pulls[i]`
+holds for every row. The proof finds the push `j` with the key of pull `i`, contracts the pair
+`(i, j)` and recurses.
 -/
 theorem guarantees_of_requirements_of_count_eq {κ : Type} [DecidableEq κ]
     (key : α → κ) (G R : α → Prop)
@@ -620,9 +591,8 @@ end Kernel
 /-
 ## Interactions on a known channel
 
-An `Interaction` carries its channel as a field, and its message vector is sized by that
-channel's arity. These two lemmas restate its contract on a channel it is known to use, so
-that proofs about one channel can rewrite instead of transporting along the dependency.
+The message vector of an `Interaction` is sized by its channel's arity; these lemmas restate
+the contract on a known channel, so that proofs can rewrite instead of transporting.
 -/
 
 omit [FiniteField F] [DecidableEq F] in
@@ -644,12 +614,10 @@ lemma Interaction.guarantees_iff_of_channel_eq {i : Interaction F} {channel : Ra
   rfl
 
 /-
-## Legacy bridges: from field-sum balance to the kernel
+## From `BalancedInteractions` to events
 
-`BalancedInteractions` is the LogUp relation together with its no-wrap guard. Under the
-legacy reading of direction, it supplies pull support unconditionally and count balance for
-unit multiplicities. These theorems are the entry points of the shared kernel for the
-existing signed-multiplicity channels; nothing above is weakened.
+Under the sign reading `Interaction.legacyEvent`, `BalancedInteractions` gives pull support,
+and count balance for unit multiplicities.
 -/
 
 omit [DecidableEq F] in
@@ -661,9 +629,8 @@ lemma natCast_eq_iff_of_le_of_lt_ringChar {a b n : ℕ} (ha : a ≤ n) (hb : b �
     exact Nat.cast_inj
 
 /--
-The legacy reading of an interaction as a bus event: the direction is read off the sign
-convention, where multiplicity `-1` is a receive and any other nonzero multiplicity a
-provide. This is exactly the case split of `exists_push_of_pull`.
+Reads an interaction as an event by the sign convention of `exists_push_of_pull`:
+multiplicity `-1` is a receive, any other nonzero multiplicity a provide.
 -/
 def Interaction.legacyEvent (i : Interaction F) : Event F where
   payload := i.msg
@@ -720,9 +687,8 @@ lemma balanceOf_eq_sub_activeCount_legacyEvent {interactions : List (Interaction
     · exact absurd h h_neg
 
 /--
-Field-sum balance with unit multiplicities gives exact count balance in the legacy reading.
-The no-wrap guard is what makes the natural-number conclusion valid; over `F 2` the guard
-leaves room for at most one interaction, so the statement is true there but useless.
+Field-sum balance with unit multiplicities gives count balance in the sign reading. The no-wrap
+guard makes the natural-number conclusion valid; over `F 2` it allows at most one interaction.
 -/
 theorem countBalanced_legacyEvent_of_balancedInteractions {interactions : List (Interaction F)} :
     BalancedInteractions interactions →
@@ -735,9 +701,8 @@ theorem countBalanced_legacyEvent_of_balancedInteractions {interactions : List (
     lt_ringChar).mp balance
 
 /--
-The count-equality step of the VM argument, extracted from `BalancedInteractions`:
-pulls of multiplicity `-1` and pushes of multiplicity `1` occur equally often per message.
-No characteristic assumption is needed for this step.
+Under `BalancedInteractions`, pulls of multiplicity `-1` and pushes of multiplicity `1` occur
+equally often per message.
 -/
 theorem count_eq_of_balancedInteractions {pulls pushes : List (Interaction F)}
     (balance : BalancedInteractions (pulls ++ pushes))
@@ -771,12 +736,8 @@ can "follow implications around the cycle" to show that _all_ the guarantees/req
 By narrowing the conclusion to only the guarantees of the push, the formulation cleverly
 avoids talking about cycles at all, and achieves a comparatively simple proof by induction.
 
-Until the bus-balance work this theorem assumed `[Fact (ringChar F ≠ 2)]`, used only to know
-that `1 ≠ -1` when reading a push as a provider. The assumption is not needed: over a field of
-characteristic `2` the no-wrap guard of `BalancedInteractions` leaves room for at most one
-interaction (`length_le_one_of_balancedInteractions_of_ringChar_eq_two`), so the cycle is empty
-and the statement holds vacuously. It therefore says nothing useful over a binary field; the
-directed path of `Clean.Air.BalanceModel` is the one to use there.
+In characteristic `2` the no-wrap guard allows at most one interaction, so the statement holds
+vacuously; directed channels (`Clean.Air.BalanceModel`) are the tool for binary fields.
 -/
 theorem guarantees_of_requirements_of_requirements_of_guarantees
     (channel : RawChannel F) [channel.Normal]
@@ -797,7 +758,7 @@ theorem guarantees_of_requirements_of_requirements_of_guarantees
     rw [List.length_append, len_pulls, len_pushes] at this
     omega
   have : Fact (ringChar F ≠ 2) := ⟨h2⟩
-  -- the shared kernel does the induction; we supply count equality and the bridge
+  -- the kernel does the induction; we supply count equality and the bridge
   refine guarantees_of_requirements_of_count_eq (·.msg) (·.Guarantees data) (·.Requirements data)
     pulls pushes n len_pulls len_pushes
     (count_eq_of_balancedInteractions balance pulls_mult pushes_mult) ?_

@@ -4,41 +4,17 @@ import Clean.Air.Vm
 /-!
 # VM ensembles over directed channels
 
-The VM construction of `Clean.Air.Vm` reads direction off the sign of the multiplicity and its
-balance from `BalancedInteractions`, so it says nothing useful over a binary field (see the
-docstring of the legacy VM theorem in `Clean.Air.Balance`). This file is its counterpart for a
-VM whose state channel is a `DirectedChannel` and whose ensemble is balanced under the multiset
-model. The legacy file is untouched; the generic list lemmas it defines (`List.flattenPairs`,
-`List.zip_flattenPairs_perm`, ...) and `VmStep` are reused. `DirectedVmTables` duplicates
-`VmTables` with the channel type changed rather than abstracting the channel kind (a class
-supplying the gated and ungated interactions and their evaluated forms over
-`BalanceModel.Reads`): removing the duplication that way would thread the abstraction through
-the legacy file, which stays untouched during the roadmap. As in the legacy construction,
-`SoundVmEnsembleWith` extends `Ensemble`, not `SoundEnsembleWith`: nothing is added after
-`addVm`. Lookup tables a VM relies on (a successor provider, a byte table) are added and
-finished before `addVm`, as the Fibonacci example does for its byte and add8 channels.
+The counterpart of `Clean.Air.Vm` for a VM whose state channel is a `DirectedChannel` and whose
+ensemble is balanced under the multiset model; `Clean.Air.Vm` reads direction off the sign of
+the multiplicity and says nothing useful over a binary field. `DirectedVmTables` mirrors
+`VmTables`: every table receives and provides on the state channel under one `enabled` gate
+that its constraints make boolean, and the verifier receives the final state and provides the
+initial one.
 
-`DirectedVmTables` mirrors `VmTables`: every table exposes a receive and a provide of the state
-channel gated by one `enabled` expression, the verifier receives the final state and provides
-the initial one, and the verifier's requirements follow from its constraints alone. The boolean
-gate is the first conjunct of every directed interaction's local requirement; here it is
-established from the row constraints (`tables_channel`), since the VM argument is what derives
-the remaining requirements, and it is what the multiset model's `UnitEvent` discipline asks for
-when the count derivation is invoked
-(`DirectedVmWitness.verifier_guarantees_of_requirements_of_requirements_of_guarantees`).
-
-`Ensemble.SoundVmChannelWith model`, `SoundVmEnsembleWith F model PublicIO` and its `toFormal`
-are the model-aware counterparts of `SoundVmChannel`, `SoundVmEnsemble` and its `toFormal`,
-generic in the model. `SoundEnsembleWith.addVm` adds a directed VM on top of a sound ensemble
-under the multiset model: the finished channels go through
-`guarantees_of_requirements_append_with` as in the legacy construction, and the state channel
-through `DirectedChannel.guarantees_of_requirements_of_requirements_of_guarantees`, with count
-balance supplied by the model from its relation and the boolean gates.
-
-One model per ensemble: the state channel and the finished channels are balanced under the
-same model, as `EnsembleWitness.BalancedChannelsWith` fixes. A backend mixing a LogUp lookup
-bus with a multiset state bus would need per-channel models; that is a roadmap decision, not
-something this file can offer.
+`SoundEnsembleWith.addVm` adds a directed VM on top of a sound ensemble under the multiset
+model, using `DirectedChannel.guarantees_of_requirements_of_requirements_of_guarantees` for the
+state channel. Lookup channels the VM relies on are added and finished before `addVm`; all
+channels of the ensemble are balanced under the same model.
 -/
 
 namespace Air.Flat
@@ -500,10 +476,9 @@ lemma pushes_getElem_zero_eq (witness : DirectedVmWitness vm) :
     verifierPush, verifierEnabled, DirectedVmTables.step, DirectedVmTables.verifierStep]
 
 /--
-The directed VM theorem for `DirectedVmTables`, under the multiset model: the counterpart of
-`VmWitness.verifier_guarantees_of_requirements_of_requirements_of_guarantees`. Count balance is
-obtained from the model's relation through its count derivation, under the boolean-gate
-discipline that the row constraints establish.
+The VM theorem for `DirectedVmTables` under the multiset model: the counterpart of
+`VmWitness.verifier_guarantees_of_requirements_of_requirements_of_guarantees`, with count
+balance derived from the model's relation and the boolean gates.
 -/
 theorem verifier_guarantees_of_requirements_of_requirements_of_guarantees
     (witness : DirectedVmWitness vm) :
@@ -626,10 +601,8 @@ lemma addDirectedVm_witness (ens : Ensemble F PublicIO) (vm : DirectedVmTables F
 
 /--
 Soundness of a directed VM on top of a sound ensemble under the multiset model: the
-counterpart of `addVm_soundVmChannel_of_soundChannels`. The finished channels are handled as
-in the legacy construction, through the ordered-channel argument under the model; the state
-channel through the directed VM theorem. Unlike the legacy theorem, this one does not take the
-consistency of the finished channels separately: it is the third conjunct of `soundChannels`.
+counterpart of `addVm_soundVmChannel_of_soundChannels`. The consistency of the finished
+channels is the third conjunct of `soundChannels`.
 -/
 theorem addDirectedVm_soundVmChannelWith_of_soundChannelsWith (ens : Ensemble F PublicIO)
     {finished : List (RawChannel F)} (soundChannels : ens.SoundChannelsWith (.multiset F) finished)
@@ -766,12 +739,11 @@ end Ensemble
 
 namespace SoundEnsembleWith
 
-/-- Add a directed VM on top of a sound ensemble under the multiset model. The side conditions
-are the legacy ones and are decided by `simp` with `circuit_norm` from the tables' metadata;
-as for the legacy `addVm`, the VM's own definitions have to be added to the simp set, and the
-guarantee-channel condition needs `simp +instances` to see through the circuits' explicit
-metadata (the default tactic includes it). The definition is in `circuit_norm` for the reason
-given at `SoundEnsembleWith.addTable`. -/
+/-- Add a directed VM on top of a sound ensemble under the multiset model. As for the legacy
+`addVm`, the side conditions are decided by `simp [circuit_norm]` with the VM's definitions
+added; the guarantee-channel condition needs `simp +instances` to see through the circuits'
+explicit metadata. The definition is in `circuit_norm` as explained at
+`SoundEnsembleWith.addTable`. -/
 @[circuit_norm]
 def addVm (ens : SoundEnsembleWith F (.multiset F) PublicIO) (vm : DirectedVmTables F PublicIO)
     (ne_mem_vm_channel : ∀ table ∈ ens.tables, vm.channel.toRaw ∉ table.circuit.channels

@@ -20,11 +20,11 @@ In this terminology, a `Flat.Component` is a one-row AIR component: it packages 
 
 It also proves the basic row-level transport lemmas: instantiated component operations agree with row operations, component soundness lifts to table soundness, and table interactions can be collected per channel.
 
-`Balance.lean` contains the channel multiset theory. It defines `BalancedInteractions`, proves permutation and counting lemmas, and provides the channel-level implication principles used by higher-level soundness proofs. It also defines `RawChannel.Consistent` and `RawChannel.Normal`; legacy typed channels (`Channel`) are normal by construction, and normal channels are consistent, so both properties are satisfied in practice (both are tied to the LogUp relation; the consistency of directed channels is `RawChannel.ConsistentWith` in `BalanceModel.lean`). A highlight in `Balance.lean` is the "guarantees-to-requirements-reversal" theorem which provides the basis for soundness of VM channels. That theorem is now a wrapper around a characteristic-free kernel: `Event` is the proof-facing view of an interaction (payload, direction, activity), `PullsSupported` and `CountBalanced` are the two facts the soundness arguments consume, stated over natural-number counts, and `guarantees_of_requirements_of_count_eq` is the reversal argument with no field structure at all. `Interaction.legacyEvent` reads direction off the sign convention, and the legacy bridges derive both kernel facts from `BalancedInteractions`.
+`Balance.lean` contains the channel multiset theory. It defines `BalancedInteractions`, proves permutation and counting lemmas, and provides the channel-level implication principles used by higher-level soundness proofs. It also defines `RawChannel.Consistent` and `RawChannel.Normal`; typed `Channel`s are normal by construction, and normal channels are consistent, so both properties are satisfied in practice. A highlight in `Balance.lean` is the "guarantees-to-requirements-reversal" theorem which provides the basis for soundness of VM channels. It is derived from a characteristic-free kernel: an `Event` is the payload, direction and activity of an interaction, `PullsSupported` and `CountBalanced` are support and count facts over natural numbers, and `guarantees_of_requirements_of_count_eq` is the reversal argument. `Interaction.legacyEvent` reads direction off the sign of the multiplicity.
 
-`BalanceModel.lean` packages what a proof-system verifier establishes per channel as a `BalanceModel`: the verified relation, its side conditions, the reading of interactions as events, and the derivations of the kernel facts. It is an abstract count/support interface: the structure does not relate a model's reading to the raw channel contract, so a model is only usable in a channel soundness argument together with a proved correspondence law for the encoding it reads. `BalanceModel.logUp` is `BalancedInteractions` under the legacy reading; `BalanceModel.multiset` is the permutation of active provided and received payloads under the directed reading `Interaction.directedEvent`, with no characteristic bound, and its correspondence law is `directedEvent_emittedValue` together with `guarantees_of_requirements_of_pullsSupported`. A model only fits the channel encoding it reads: the multiset model on a legacy channel strips a payload element as if it were a tag and accepts messages that never matched, and the LogUp model on a directed channel is met only by traces with no active interaction. `RawChannel.ConsistentWith model` is the per-channel soundness obligation under a model, the legacy `RawChannel.Consistent` with the model as a parameter; it is declared for legacy channels under `logUp` and for directed channels under `multiset` only and is demanded of every channel by `FormalEnsembleWith`. It is false for the multiset model on a legacy channel with a refutable guarantee, but true for the LogUp model on every directed channel (that relation admits nothing active), so by itself it does not exclude that pairing. `BalanceModel.Reads model Ch` records the typed channel constructor each model reads (`logUp` reads `Channel`, `multiset` reads `DirectedChannel`); the model-aware builders take channels through it, so a channel of the wrong kind is a type error. The model-aware statements `Ensemble.StatementWith`, `SoundnessWith`, `CompletenessWith` and `FormalEnsembleWith` take the model explicitly, and there is no default model; the legacy `Statement` is their LogUp instance by definition. Directed channels themselves live in `Clean/Circuit/DirectedChannel.lean`: a `DirectedChannel` stores the direction of each interaction as the last raw message element, keeps the activation gate as the multiplicity, requires a well-formed tag, and keeps `assumeGuarantees` independent of direction, so that a receive can decline the guarantee. The raw JSON of a directed interaction is the legacy shape with one more message element and does not identify the directed interpretation; the opt-in export protocol is future work.
+`BalanceModel.lean` packages the relation a proof-system verifier establishes on one channel as a `BalanceModel`, together with a reading of interactions as events and the derivations of the kernel facts. `BalanceModel.logUp` is `BalancedInteractions` under the sign reading; `BalanceModel.multiset` is a permutation of active provided and received payloads under the directed reading `Interaction.directedEvent`, with no characteristic bound. A model only fits the channel encoding it reads: `RawChannel.ConsistentWith model` is the per-channel soundness obligation under a model, and `BalanceModel.Reads model Ch` ties each model to its typed channel constructor (`logUp` reads `Channel`, `multiset` reads `DirectedChannel`). The model-aware statements `Ensemble.StatementWith`, `SoundnessWith`, `CompletenessWith` and `FormalEnsembleWith` take the model explicitly, with no default; the legacy `Statement` is their LogUp instance by definition.
 
-`OrderedChannelWith.lean` and `VmWith.lean` connect the models to ensemble soundness. The first restates the ordered-channel construction with the balance model as an explicit parameter (`PartialBalancedChannelWith`, `SoundChannelsWith`, `Ensemble.TableSoundnessWith`) and provides `SoundEnsembleWith F model PublicIO` with builders that take typed channels through `BalanceModel.Reads` (`addChannel`, `addFinishedChannel`) or raw channels gated on `RawChannel.ConsistentWith` (`addRawChannel`, `addFinishedRawChannel`), and a `toFormal` that fills `FormalEnsembleWith.consistent` from the consistency the record carries for every channel. The legacy notions are its `logUp` instances (`SoundEnsemble.withLogUp`, `SoundEnsembleWith.toSoundEnsemble`), and its module docstring says where a capacity premise (Clean issue #452) enters the LogUp side condition. The second is the VM construction for a directed state channel under the multiset model: `DirectedVmTables`, the directed VM theorem `DirectedChannel.guarantees_of_requirements_of_requirements_of_guarantees` (an instance of the kernel, with count equality from `count_eq_of_countBalanced`), `SoundVmEnsembleWith` and `SoundEnsembleWith.addVm`.
+`OrderedChannelWith.lean` and `VmWith.lean` connect the models to ensemble soundness. The first restates the ordered-channel construction with the model as a parameter: `SoundEnsembleWith F model PublicIO` has builders that take typed channels through `BalanceModel.Reads` (`addChannel`, `addFinishedChannel`) or raw channels with a `RawChannel.ConsistentWith` instance (`addRawChannel`, `addFinishedRawChannel`). The second is the VM construction for a directed state channel under the multiset model: `DirectedVmTables`, `SoundVmEnsembleWith` and `SoundEnsembleWith.addVm`.
 
 `FlatEnsemble.lean` defines flat AIR ensembles, `Flat.Ensemble` and their witnesses, `Flat.EnsembleWitness`. An ensemble has components, channels, and a verifier circuit. Its `Statement` is the raw proof-system relation: there exists a witness whose table constraints hold and whose channel interactions are balanced. The ensemble file also soundness and completeness and the `FormalEnsemble` structure which bundles an ensemble with its `Spec`, `Assumptions` and the soundness proof (completeness is TODO).
 
@@ -38,12 +38,11 @@ The library currently provides two distinct arguments to establish soundness, co
 
 ## Channel contracts and the bus export protocol
 
-Clean has two kinds of typed channel. They differ in how a row's interaction carries its
-direction, in what a row must prove and may assume, and in the relation the verifier enforces
-on the bus. Legacy channels are the default; directed channels are opt-in and exist because the
-legacy contract says nothing useful over a field of characteristic two (`−1 = 1`, so a signed
-multiplicity cannot tell a provide from a receive, and `1 + 1 = 0`, so two unmatched sends
-cancel).
+Clean has two kinds of typed channel. They differ in how an interaction carries its direction,
+in what a row must prove and may assume, and in the relation the verifier enforces on the bus.
+Legacy channels are the default; directed channels are opt-in, for fields of characteristic two,
+where `−1 = 1` (a signed multiplicity cannot tell a provide from a receive) and `1 + 1 = 0` (two
+unmatched sends cancel).
 
 ### Legacy channels (`Channel`, `Clean/Circuit/Channel.lean`)
 
@@ -58,13 +57,11 @@ row:
 | `emit m msg` | `m` | no | `G msg` if `m ∉ {0, −1}` |
 | `emit 0 msg` | zero | no | nothing |
 
-`emit (−1) msg` is a receive that assumes nothing and owes nothing; sp1-lean's memory readers use
-`emit (±is_real)` in this style. The raw requirement is `m ≠ −1 → m ≠ 0 → G msg`; the `−1`
-exemption does not extend to other negative weights. The verifier enforces the LogUp relation:
-for every message, the field sum of the multiplicities is `0`, under the no-wrap guard that the
-channel's interaction list is shorter than the characteristic (`BalancedInteractions`,
-`BalanceModel.logUp`). A weighted `emit` participates in that sum with its weight; only unit
-multiplicities give a count of events.
+`emit (−1) msg` is a receive that assumes nothing and owes nothing; the `−1` exemption does not
+extend to other negative weights. The verifier enforces the LogUp relation: for every message
+the field sum of the multiplicities is `0`, and the channel's interaction list is shorter than
+the characteristic (`BalancedInteractions`, `BalanceModel.logUp`). Only unit multiplicities give
+a count of events.
 
 ### Directed channels (`DirectedChannel`, `Clean/Circuit/DirectedChannel.lean`)
 
@@ -81,53 +78,45 @@ separate from the direction:
 | `emit .provide enabled msg` | provide | no | as `pushIf` |
 | any, with `enabled = 0` | either | no | nothing beyond the gate |
 
-`push`/`pull` are the `enabled = 1` cases. A receive that declines the guarantee still counts on
-the receiving side of the bus. The verifier enforces the multiset relation: the payloads of the
-active provides are a permutation of the payloads of the active receives, counted in the
-natural numbers, with the tag removed before payloads of opposite direction are compared
-(`BalanceModel.multiset` under the reading `Interaction.directedEvent`). There is no
-characteristic condition. A raw interaction whose tag is neither value fails the channel's
-requirements, so no sound row produces one.
+`push`/`pull` are the `enabled = 1` cases. The verifier enforces the multiset relation: the
+payloads of the active provides are a permutation of those of the active receives, with the tag
+removed (`BalanceModel.multiset`), and there is no characteristic condition. A raw interaction
+whose tag is neither value fails the channel's requirements, so no sound row produces one.
 
 ### Ensemble soundness, per kind
 
-A lookup-style ensemble on either kind is built with the model-aware builders of
-`OrderedChannelWith.lean` (`SoundEnsembleWith F model PublicIO`), which accept a channel only
-of the kind the model reads (`BalanceModel.Reads`); a VM on a directed state channel with
-`VmWith.lean`. The legacy `SoundEnsemble` and `VmTables` remain for LogUp ensembles. In both
-cases the soundness theorem's premise is "every channel is balanced under the model", so it
-holds of a deployed system only if the backend enforces that model's relation on that
-channel's interactions.
+Lookup-style ensembles on either kind are built with `SoundEnsembleWith F model PublicIO`
+(`OrderedChannelWith.lean`), which accepts only channels of the kind the model reads, and a VM
+on a directed state channel with `VmWith.lean`; `SoundEnsemble` and `VmTables` remain for LogUp
+ensembles. Either way, soundness assumes that every channel is balanced under the model, so it
+holds of a deployed system only if the backend enforces that model's relation.
 
-A worked directed VM is `Clean/Air/Test/BusBalanceVm.lean`: a counter whose state channel
-carries reachability of the state, a successor lookup channel, and a verifier that fixes the
-final program counter `N`. Its ensemble theorem, over any field and without a characteristic
-bound, is that the output is the counter after `N` steps; over `F 2` the one-step run from `0`
-to `1` has an explicit witness (four interactions on the state channel, two on the successor
-channel) and the output `0` is rejected under the same statement, while the legacy relation
-admits no witness of the ensemble at all (its verifier alone puts two interactions on the
-state channel, one more than the legacy guard allows over `F 2`).
+A worked directed VM is `Clean/Examples/FibonacciWithDirectedChannels.lean`: the Fibonacci VM
+of `Clean/Examples/FibonacciWithChannels.lean` on a directed state channel, with an addition
+lookup channel and a verifier that fixes the final index `N`. Its soundness theorem holds over
+any field: the output is a Fibonacci pair `(fib k, fib (k + 1))` with `(k : F) = N`, so `N`
+fixes the index only modulo the characteristic. Over `F 2` with `N = 1` the one-step and the
+three-step run are both accepted, with different outputs; the output `(0, 0)` is rejected over
+every field, since consecutive Fibonacci numbers are coprime; and the legacy relation admits no
+witness of the ensemble, because its verifier alone puts two interactions on the state channel.
 
 ### The bus export protocol (`Clean/Air/BusProtocol.lean`)
 
-The JSON of an interaction (`Clean/Circuit/Json.lean`) is the same for both kinds: a channel
-name, a multiplicity and a message, with a directed interaction's tag as the last message
-element. Those bytes are unchanged and do not say which relation applies. The bus export
-protocol, version 1, binds the interpretation beside them:
+The JSON of an interaction (`Clean/Circuit/Json.lean`) has the same shape for both kinds, with a
+directed interaction's tag as the last message element, so it does not say which relation
+applies. The bus export protocol, version 1, records the interpretation beside those bytes:
 
 - a `ChannelSchema` per channel: its name, its raw arity, and its layout, `signed` (legacy: the
   message is the payload, the multiplicity a signed weight, relation `logup`) or `directed`
-  (the message is the payload followed by the tag at index `arity − 1`, tags `provide = 0` and
-  `receive = 1`, the multiplicity a `0`/`1` gate, relation `multiset` on the tag-stripped
-  payloads, a tag outside `{0, 1}` rejected);
-- a `BusProtocol` per ensemble: the version, the balance model (by its layout, one model per
-  ensemble), and the channel schemas; `WellFormed` checks by `decide` that every channel has
-  the layout the model reads.
+  (the payload followed by the tag at index `arity − 1`, a `0`/`1` gate, relation `multiset` on
+  the tag-stripped payloads, a tag outside `{0, 1}` rejected);
+- a `BusProtocol` per ensemble: the layout of its balance model and the channel schemas;
+  `WellFormed` checks by `decide` that every channel has the layout the model reads.
 
-Schemas come from the typed channels (`Channel.schema`, `DirectedChannel.schema`), the model's
-layout from `BalanceModel.Protocol`, and each clause of the directed layout is a proved fact
-about the encoding (tag index, payload size, gate and tag rules; see the module). A backend
-that implements the schema enforces exactly the relation the Lean proofs assume.
+Schemas come from the typed channels (`Channel.schema`, `DirectedChannel.schema`) and the
+model's layout from `BalanceModel.Protocol`. Each clause of the directed layout is proved as a
+fact about the encoding, so a backend implementing the schema enforces the relation the proofs
+assume.
 
 ## Relation To Clean/Table
 
