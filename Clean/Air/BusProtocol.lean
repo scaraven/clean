@@ -1,5 +1,7 @@
-import Clean.Air.BalanceModel
-import Clean.Circuit.Json
+module
+
+public import Clean.Air.BalanceModel
+public import Clean.Circuit.Json
 
 /-!
 # The bus export protocol, version 1
@@ -17,6 +19,8 @@ its channel schemas). The last section proves each clause of the directed layout
 the encoding; the gate and tag rules are local-contract obligations, so a backend enforcing them
 rejects only traces that no sound row produces.
 -/
+
+@[expose] public section
 
 open Lean
 

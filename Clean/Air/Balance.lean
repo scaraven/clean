@@ -1,5 +1,9 @@
-import Clean.Circuit
-import Clean.Circuit.DirectedChannel
+module
+
+public import Clean.Circuit
+public import Clean.Circuit.DirectedChannel
+
+@[expose] public section
 
 variable {F : Type} [FiniteField F] [DecidableEq F]
 variable {Message : TypeMap} [ProvableType Message]

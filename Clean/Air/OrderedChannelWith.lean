@@ -1,5 +1,7 @@
-import Clean.Air.BalanceModel
-import Clean.Air.OrderedChannel
+module
+
+public import Clean.Air.BalanceModel
+public import Clean.Air.OrderedChannel
 
 /-!
 # Ordered channels under an explicit balance model
@@ -17,6 +19,8 @@ channels through `[channel.ConsistentWith model]` (`addRawChannel`, `addFinished
 Unlike `SoundEnsemble`, it records the consistency of every channel, not only the finished
 ones, because `FormalEnsembleWith` demands it.
 -/
+
+@[expose] public section
 
 variable {F : Type} [FiniteField F] [DecidableEq F]
 open Air.Flat (Component Table Tables)

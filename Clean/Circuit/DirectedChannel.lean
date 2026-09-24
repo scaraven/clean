@@ -1,4 +1,6 @@
-import Clean.Circuit.Explicit
+module
+
+public import Clean.Circuit.Explicit
 
 /-!
 # Directed channels
@@ -15,6 +17,8 @@ neither value fails the channel's `Requirements`. `assumeGuarantees` is independ
 direction, so a receiver can decline the guarantee (`emit .receive`). The JSON of a directed
 interaction has the legacy shape; `Clean.Air.BusProtocol` records how to interpret it.
 -/
+
+@[expose] public section
 
 variable {F : Type} [FiniteField F]
 variable {Message : TypeMap} [ProvableType Message]

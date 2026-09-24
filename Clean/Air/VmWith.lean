@@ -1,5 +1,7 @@
-import Clean.Air.OrderedChannelWith
-import Clean.Air.Vm
+module
+
+public import Clean.Air.OrderedChannelWith
+public import Clean.Air.Vm
 
 /-!
 # VM ensembles over directed channels
@@ -16,6 +18,8 @@ model, using `DirectedChannel.guarantees_of_requirements_of_requirements_of_guar
 state channel. Lookup channels the VM relies on are added and finished before `addVm`; all
 channels of the ensemble are balanced under the same model.
 -/
+
+@[expose] public section
 
 namespace Air.Flat
 variable {F : Type} [FiniteField F] [DecidableEq F]
@@ -233,10 +237,10 @@ theorem allTables_channel (vm : DirectedVmTables F PublicIO) :
   · simp only [circuit_norm, step, h, reduceDIte] at ⊢ table_mem
     exact vm.tables_channel' table_mem
 
-lemma interactionsWith_eq {vm : DirectedVmTables F PublicIO} {table} (_ : table ∈ vm.allTables) :
+lemma interactionsWith_eq {vm : DirectedVmTables F PublicIO} {table} (h : table ∈ vm.allTables) :
   table.operations.interactionsWith vm.channel.toRaw = [
-    (vm.channel.pulledIf (vm.step ‹_›).enabled (vm.step ‹_›).pull).toRaw,
-    (vm.channel.pushedIf (vm.step ‹_›).enabled (vm.step ‹_›).push).toRaw ] := by
+    (vm.channel.pulledIf (vm.step h).enabled (vm.step h).pull).toRaw,
+    (vm.channel.pushedIf (vm.step h).enabled (vm.step h).push).toRaw ] := by
   apply Component.interactionsWith_of_exposedChannels
   apply vm.allTables_channel
 
@@ -252,19 +256,19 @@ variable {vm : DirectedVmTables F PublicIO}
 open EnsembleWitness
 
 noncomputable def rowEnabled (witness : DirectedVmWitness vm) {table}
-    (_ : table ∈ witness.allTables) (row : Array F) : F :=
+    (h : table ∈ witness.allTables) (row : Array F) : F :=
   (table.environment row)
-    (vm.step (witness.mem_allTables_component_of_mem_allTables ‹_›)).enabled
+    (vm.step (witness.mem_allTables_component_of_mem_allTables h)).enabled
 
-noncomputable def rowPull (witness : DirectedVmWitness vm) {table} (_ : table ∈ witness.allTables)
+noncomputable def rowPull (witness : DirectedVmWitness vm) {table} (h : table ∈ witness.allTables)
     (row : Array F) : vm.Message F :=
   eval (table.environment row)
-    (vm.step (witness.mem_allTables_component_of_mem_allTables ‹_›)).pull
+    (vm.step (witness.mem_allTables_component_of_mem_allTables h)).pull
 
-noncomputable def rowPush (witness : DirectedVmWitness vm) {table} (_ : table ∈ witness.allTables)
+noncomputable def rowPush (witness : DirectedVmWitness vm) {table} (h : table ∈ witness.allTables)
     (row : Array F) : vm.Message F :=
   eval (table.environment row)
-    (vm.step (witness.mem_allTables_component_of_mem_allTables ‹_›)).push
+    (vm.step (witness.mem_allTables_component_of_mem_allTables h)).push
 
 noncomputable def verifierEnabled (witness : DirectedVmWitness vm) : F :=
   Expression.eval (Environment.fromInput witness.publicInput witness.data) vm.verifierStep.enabled
@@ -281,30 +285,30 @@ noncomputable def verifierPush (witness : DirectedVmWitness vm) : vm.Message F :
 /-- The evaluated state-channel interactions of a row: a receive that assumes the guarantee
 and a provide, both gated by the row's `enabled`. -/
 lemma interactionValuesWith_eq (witness : DirectedVmWitness vm)
-    {table} (_ : table ∈ witness.allTables) (row : Array F) :
+    {table} (h : table ∈ witness.allTables) (row : Array F) :
   table.component.operations.interactionValuesWith vm.channel.toRaw (table.environment row) = [
-    vm.channel.emittedValue .receive (witness.rowEnabled ‹_› row) (witness.rowPull ‹_› row) true,
-    vm.channel.emittedValue .provide (witness.rowEnabled ‹_› row) (witness.rowPush ‹_› row)
+    vm.channel.emittedValue .receive (witness.rowEnabled h row) (witness.rowPull h row) true,
+    vm.channel.emittedValue .provide (witness.rowEnabled h row) (witness.rowPush h row)
       false ] := by
   simp only [circuit_norm,
-    vm.interactionsWith_eq (witness.mem_allTables_component_of_mem_allTables ‹_›),
+    vm.interactionsWith_eq (witness.mem_allTables_component_of_mem_allTables h),
     rowEnabled, rowPull, rowPush, DirectedChannel.eval_toRaw]
 
 noncomputable def interactionPairs (witness : DirectedVmWitness vm) :
     List (Interaction F × Interaction F) :=
-  witness.allTables.attach.flatMap fun ⟨ table, _ ⟩ =>
+  witness.allTables.attach.flatMap fun ⟨ table, h ⟩ =>
     table.table.map fun row =>
-      (vm.channel.emittedValue .receive (witness.rowEnabled ‹_› row) (witness.rowPull ‹_› row) true,
-        vm.channel.emittedValue .provide (witness.rowEnabled ‹_› row) (witness.rowPush ‹_› row)
+      (vm.channel.emittedValue .receive (witness.rowEnabled h row) (witness.rowPull h row) true,
+        vm.channel.emittedValue .provide (witness.rowEnabled h row) (witness.rowPush h row)
           false)
 
 lemma mem_interactionPairs_iff {witness : DirectedVmWitness vm}
     {pair : Interaction F × Interaction F} :
   pair ∈ witness.interactionPairs ↔
-    ∃ (table : Table F) (_ : table ∈ witness.allTables), ∃ row ∈ table.table,
-    pair = (vm.channel.emittedValue .receive (witness.rowEnabled ‹_› row) (witness.rowPull ‹_› row)
+    ∃ (table : Table F) (h : table ∈ witness.allTables), ∃ row ∈ table.table,
+    pair = (vm.channel.emittedValue .receive (witness.rowEnabled h row) (witness.rowPull h row)
         true,
-      vm.channel.emittedValue .provide (witness.rowEnabled ‹_› row) (witness.rowPush ‹_› row)
+      vm.channel.emittedValue .provide (witness.rowEnabled h row) (witness.rowPush h row)
         false) := by
   simp [interactionPairs]
   tauto
@@ -321,16 +325,16 @@ lemma zip_pulls_pushes_eq_interactionPairs {witness : DirectedVmWitness vm} :
 
 lemma mem_pulls_iff {witness : DirectedVmWitness vm} {pull : Interaction F} :
   pull ∈ witness.pulls ↔
-    ∃ (table : Table F) (_ : table ∈ witness.allTables), ∃ row ∈ table.table,
-    pull = vm.channel.emittedValue .receive (witness.rowEnabled ‹_› row) (witness.rowPull ‹_› row)
+    ∃ (table : Table F) (h : table ∈ witness.allTables), ∃ row ∈ table.table,
+    pull = vm.channel.emittedValue .receive (witness.rowEnabled h row) (witness.rowPull h row)
       true := by
   simp [pulls, interactionPairs]
   tauto
 
 lemma mem_pushes_iff {witness : DirectedVmWitness vm} {push : Interaction F} :
   push ∈ witness.pushes ↔
-    ∃ (table : Table F) (_ : table ∈ witness.allTables), ∃ row ∈ table.table,
-    push = vm.channel.emittedValue .provide (witness.rowEnabled ‹_› row) (witness.rowPush ‹_› row)
+    ∃ (table : Table F) (h : table ∈ witness.allTables), ∃ row ∈ table.table,
+    push = vm.channel.emittedValue .provide (witness.rowEnabled h row) (witness.rowPush h row)
       false := by
   simp [pushes, interactionPairs]
   tauto
@@ -348,8 +352,8 @@ lemma pushes_length {witness : DirectedVmWitness vm} :
 
 lemma rowEnabled_isBool_of_constraints {witness : DirectedVmWitness vm} :
     witness.Constraints →
-    ∀ table (_ : table ∈ witness.allTables), ∀ row ∈ table.table,
-      IsBool (witness.rowEnabled ‹_› row) := by
+    ∀ table (h : table ∈ witness.allTables), ∀ row ∈ table.table,
+      IsBool (witness.rowEnabled h row) := by
   intro constraints table table_mem row row_mem
   simp only [circuit_norm, rowEnabled, DirectedVmTables.step, DirectedVmTables.verifierStep]
   by_cases h_verifier : table.component = vm.toEnsemble.verifierTable

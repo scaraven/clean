@@ -1,5 +1,7 @@
-import Clean.Air.VmWith
-import Mathlib.Data.Nat.Fib.Basic
+module
+
+public import Clean.Air.VmWith
+public import Mathlib.Data.Nat.Fib.Basic
 
 /-!
 # Fibonacci over directed channels
@@ -15,6 +17,8 @@ congruent to `N` modulo the characteristic. Over `F 2` with `N = 1`, both the on
 the three-step run `0 → 1 → 0 → 1` are accepted, with different outputs; the output `(0, 0)` is
 rejected over every field; and the legacy sign-based relation accepts no witness at all.
 -/
+
+@[expose] public section
 
 namespace Examples.FibonacciWithDirectedChannels
 open Air.Flat
@@ -222,7 +226,7 @@ theorem fibEnsemble_one_step_over_F2 :
       simp [circuit_norm, fibStep, addProvider, fibVerifier, FibChannel, AddChannel,
         DirectedChannel.eval_toRaw, Table.environment, Environment.fromArray,
         Environment.fromInput, Component.rowOperations, activePayloads]
-    decide
+    exact List.Perm.swap _ _ _
 
 /-- The three-step run `0 → 1 → 0 → 1`: rows `(1, 0, 0, 1, 1)`, `(1, 1, 1, 1, 0)`,
 `(1, 0, 1, 0, 1)`. -/
@@ -285,7 +289,10 @@ theorem fibEnsemble_three_steps_over_F2 :
       simp [circuit_norm, fibStep, addProvider, fibVerifier, FibChannel, AddChannel,
         DirectedChannel.eval_toRaw, Table.environment, Environment.fromArray,
         Environment.fromInput, Component.rowOperations, activePayloads] <;>
-      decide
+      simp [List.perm_iff_count, List.count_cons, explicit_provable_type,
+        (by decide : (1 : F 2) + 1 = 0)]
+    intro a
+    ac_rfl
 
 /-- The legacy sign-based relation accepts no witness of this ensemble over `F 2`, whatever `N`:
 the verifier alone puts two interactions on the state channel, and the no-wrap guard

@@ -1,4 +1,6 @@
-import Clean.Air.FlatEnsemble
+module
+
+public import Clean.Air.FlatEnsemble
 
 /-!
 # Balance models
@@ -18,6 +20,8 @@ and the LogUp model on a directed channel is met only by traces with no active i
 ensemble statements (`Ensemble.StatementWith` and friends) take the model explicitly, with no
 default.
 -/
+
+@[expose] public section
 
 variable {F : Type} [FiniteField F] [DecidableEq F]
 variable {Message : TypeMap} [ProvableType Message]

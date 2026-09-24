@@ -1,5 +1,8 @@
-import Clean.Air.BalanceModel
-import Clean.Circuit.Json
+module
+
+public import Clean.Air.BalanceModel
+meta import Clean.Air.BalanceModel
+meta import Clean.Circuit.Json
 import Mathlib.Tactic.NormNum.Prime
 
 /-!
@@ -11,6 +14,8 @@ showing that the kernel hypotheses are needed, matching and mismatched model/cha
 the directed reading of malformed tags, and a small directed circuit and ensemble. An `example`
 whose type is `Prop` only checks elaboration; every semantic claim is a theorem or a `#guard`.
 -/
+
+@[expose] public section
 
 namespace BusBalanceTests
 open Air.Flat
@@ -180,7 +185,7 @@ theorem logUp_guard_necessary :
   · intro msg
     by_cases h : msg = #[0]
     · subst h
-      decide
+      simp [balanceOf, pull1]; decide
     · have h' : (#[0] : Array (F 2)) ≠ msg := fun e => h e.symm
       simp [balanceOf, pull1, h']
   · intro h
@@ -210,7 +215,7 @@ theorem legacy_reads_weight_two_receive_as_provider :
   · intro msg
     by_cases h : msg = #[0]
     · subst h
-      decide
+      simp [balanceOf, push2, pullW2]
     · have h' : (#[0] : Array (F 5)) ≠ msg := fun e => h e.symm
       simp [balanceOf, push2, pullW2, h']
 
@@ -226,13 +231,13 @@ theorem logUp_unit_receives_necessary :
   · intro msg
     by_cases h : msg = #[0]
     · subst h
-      decide
+      simp [balanceOf, push5, pullW2]; decide
     · have h' : (#[0] : Array (F 5)) ≠ msg := fun e => h e.symm
       simp [balanceOf, push5, pullW2, h']
   · intro h
     have := h #[0]
     revert this
-    decide
+    simp [activeCount, Interaction.legacyEvent, push5, pullW2, List.countP_cons]; decide
 
 /-- A weight-2 provider and two unit receives over `F 5` are LogUp-balanced, yet the active
 counts are `1` and `2`. Count balance needs unit events on the provider side. -/
@@ -246,13 +251,13 @@ theorem logUp_unit_events_necessary :
   · intro msg
     by_cases h : msg = #[0]
     · subst h
-      decide
+      simp [balanceOf, push2, pull5]; decide
     · have h' : (#[0] : Array (F 5)) ≠ msg := fun e => h e.symm
       simp [balanceOf, push2, pull5, h']
   · intro h
     have := h #[0]
     revert this
-    decide
+    simp [activeCount, Interaction.legacyEvent, push2, pull5, List.countP_cons]; decide
 
 def provide1 : Interaction (F 2) := (OneChannel (F 2)).emittedValue .provide 1 1 false
 def receive1 : Interaction (F 2) := (OneChannel (F 2)).emittedValue .receive 1 1 true
@@ -413,7 +418,8 @@ theorem logUp_rejects_directed_pair :
   intro ⟨_, h⟩
   have := h provide5.msg
   revert this
-  decide
+  simp [balanceOf, provide5, receive5, DirectedChannel.emittedValue, circuit_norm,
+    Array.push_eq_push]
 
 /-- That mismatch makes the obligation vacuous rather than false: under LogUp every directed
 gate is `0` or `1` and nothing cancels, so a balanced list on a directed channel has no active

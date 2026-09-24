@@ -1,6 +1,10 @@
-import Clean.Air.VmWith
-import Clean.Air.BusProtocol
-import Clean.Air.Test.BusBalance
+module
+
+public import Clean.Air.VmWith
+public import Clean.Air.BusProtocol
+public import Clean.Air.Test.BusBalance
+meta import Clean.Air.BusProtocol
+meta import Clean.Air.Test.BusBalance
 
 /-!
 # Bus balance tests: ensemble soundness
@@ -12,6 +16,8 @@ counterexamples show that the hypotheses of the directed VM theorem are needed; 
 export protocol is pinned by `#guard`. The test channels come from
 `Clean/Air/Test/BusBalance.lean`.
 -/
+
+@[expose] public section
 
 namespace BusBalanceEnsembleTests
 open Air.Flat
@@ -319,7 +325,7 @@ theorem counterEnsemble_statement_over_F2 :
     subst h_channel
     rw [counterWitness_interactions, BalanceModel.multiset_balanced_iff]
     simp [activePayloads, circuit_norm]
-    decide
+    exact List.Perm.swap _ _ _
 end Vm
 
 /-! ## Necessity of the hypotheses of the directed VM theorem -/
